@@ -243,11 +243,29 @@ async def test_cannot_complete_another_users_session(auth_client, other_client):
 
 
 # --- Ops ------------------------------------------------------------------
+#
+# This used to be one test against one endpoint, because /health used to check
+# the database and return 503 when it was down. Used as a liveness probe --
+# which is what the name invites -- that turns a database blip into a restart
+# loop across every replica at once.
+#
+# The probes are split now and the full coverage lives in test_observability.py.
+# What stays here is the assertion that they are still two different things,
+# because the failure mode of quietly re-merging them is an outage rather than
+# a red test.
 
 
-async def test_health_reports_database_and_provider(client):
-    resp = await client.get("/health")
+async def test_readiness_reports_database_and_provider(client):
+    resp = await client.get("/ready")
     assert resp.status_code == 200
     body = resp.json()
-    assert body["status"] == "ok"
+    assert body["status"] == "ready"
     assert body["database"] == "up"
+
+
+async def test_liveness_is_not_readiness(client):
+    resp = await client.get("/health")
+    assert resp.status_code == 200
+    assert "database" not in resp.json(), (
+        "a dependency check crept back into the liveness probe"
+    )
