@@ -13,12 +13,10 @@ from sqlalchemy import text
 from app.config import settings
 from app.db import engine
 from app.llm.client import build_provider
+from app.observability import RequestIdMiddleware, configure_logging
 from app.routers import auth, sessions
 
-logging.basicConfig(
-    level=logging.DEBUG if settings.debug else logging.INFO,
-    format="%(asctime)s %(levelname)-8s %(name)s: %(message)s",
-)
+configure_logging(debug=settings.debug)
 logger = logging.getLogger("cadence")
 
 
@@ -62,12 +60,18 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+# Added last, so it runs first: the id has to exist before anything else logs.
+app.add_middleware(RequestIdMiddleware)
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+    # Without this the browser can see the header exists but not read it, so a
+    # user reporting a bug cannot tell you which request it was.
+    expose_headers=["X-Request-ID"],
 )
 
 
@@ -86,24 +90,49 @@ async def unhandled_exception_handler(request: Request, exc: Exception) -> JSONR
 
 @app.get("/health", tags=["ops"])
 async def health() -> dict:
-    """Liveness plus a real dependency check.
+    """Liveness. Deliberately checks nothing.
 
-    A health endpoint that returns 200 while the database is unreachable is
-    worse than none -- it tells the orchestrator everything is fine while every
-    request fails.
+    THIS USED TO CHECK THE DATABASE, AND THAT WAS A BUG WAITING FOR AN OUTAGE.
+
+    Liveness and readiness answer different questions and the orchestrator does
+    different things with the answers:
+
+      liveness  fails -> restart the container
+      readiness fails -> stop sending it traffic, leave it running
+
+    A liveness probe that touches the database turns a database blip into a
+    restart loop across every replica at once. The processes were fine; the
+    only thing wrong with them was that something else was down. Restarting
+    them drops their connection pools and their in-flight streams and makes the
+    recovery slower, right when the database is already struggling.
+
+    So this endpoint answers exactly one question — can this process still
+    serve a request — and the answer is yes, because it just did.
+    """
+    return {"status": "ok", "version": app.version}
+
+
+@app.get("/ready", tags=["ops"])
+async def ready() -> JSONResponse:
+    """Readiness. Can this instance usefully serve traffic right now?
+
+    Fails with 503 when the database is unreachable, which takes this replica
+    out of the load balancer without killing it. When the database comes back,
+    the next probe succeeds and traffic returns, with no restart in between.
     """
     db_ok = True
     try:
         async with engine.connect() as conn:
             await conn.execute(text("SELECT 1"))
     except Exception:
-        logger.exception("health check: database unreachable")
+        logger.exception("readiness: database unreachable")
         db_ok = False
 
+    provider = getattr(app.state, "llm", None)
     body = {
-        "status": "ok" if db_ok else "degraded",
+        "status": "ready" if db_ok else "not ready",
         "database": "up" if db_ok else "down",
-        "llm_provider": getattr(app.state, "llm", None).name if hasattr(app.state, "llm") else "unknown",
+        "llm_provider": provider.name if provider is not None else "unknown",
         "version": app.version,
     }
     return JSONResponse(
