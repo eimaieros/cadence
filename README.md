@@ -6,6 +6,11 @@ A technical interview simulator. You name a role, an interviewer asks you
 questions that follow up on what you actually said, and at the end you get a
 scorecard that cites the moments that earned each score.
 
+[![CI](https://github.com/eimaieros/cadence/actions/workflows/ci.yml/badge.svg)](https://github.com/eimaieros/cadence/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+![Python 3.12](https://img.shields.io/badge/python-3.12-blue)
+![44 tests](https://img.shields.io/badge/tests-44-brightgreen)
+
 Built with FastAPI, PostgreSQL, and Next.js. Runs with no API key.
 
 ```bash
@@ -196,12 +201,13 @@ npm run dev
 cd backend && pytest -q
 ```
 
-32 tests. They need `cadence_test` to exist; the schema is dropped and recreated
+44 tests. They need `cadence_test` to exist; the schema is dropped and recreated
 per test, so never point `DATABASE_URL` at anything you care about.
 
 ```
-tests/test_auth.py ......... auth, token type confusion, hash leakage
-tests/test_sessions.py ..... CRUD, cross-user isolation, SSE, cost, scoring
+tests/test_auth.py ..................... auth, token type confusion, hash leakage
+tests/test_sessions.py ................. CRUD, cross-user isolation, SSE, cost, scoring
+tests/test_ratelimit_and_evals.py ...... window edges, eval harness structure
 ```
 
 ---
@@ -263,16 +269,31 @@ Honest about what this is not:
 
 - **No refresh token rotation or revocation list.** Short access TTLs are the
   mitigation. A logout that invalidates server-side would need a token store.
-- **No rate limiting.** The cost ceiling bounds spend per session but not
-  requests per user. Production needs both.
-- **Scoring is not evaluated.** There is no golden dataset checking that
-  prompt changes do not regress score quality — which is the thing I would build
-  next, because shipping prompt changes without an eval harness is regression
-  testing by vibes.
+- **Rate limiting is in-process.** `app/ratelimit.py` is a sliding window that
+  bounds one instance. Behind two replicas a caller gets twice the budget, and a
+  restart clears every window. That is a deliberate trade: the expensive path is
+  already bounded by the per-session cost ceiling, which lives in the database
+  and therefore survives both. This limiter covers the cheaper abuse — signup
+  spam, login brute force, opening sessions in a loop. Moving to Redis is a swap
+  of one dict for a sorted set; the reason not to yet is that it adds a service
+  to the compose file for a product with one instance.
+- **The eval harness only runs its structural tier in CI.** `evals/` asserts on
+  relationships rather than absolute numbers — the answer carrying figures must
+  out-score the vague one on Specificity — because `overall == 72` is not a test,
+  it is a hostage to the next model version. The structural tier needs no API
+  key and runs on every push. The comparative tier needs a real model and is
+  run by hand, so CI catches a prompt change that breaks the schema but not one
+  that quietly degrades quality.
 - **Single region, single writer.** No read replicas, no multi-region story.
 - **Fonts load from a CDN**, not `next/font`, so the project builds offline.
   Self-hosting is a one-file change.
 
+## Contributing
+
+[CONTRIBUTING.md](CONTRIBUTING.md) covers how to run it and the traps worth
+knowing before you change anything. Security reports go to
+[SECURITY.md](SECURITY.md).
+
 ## Licence
 
-MIT.
+MIT © [Rodrigo Figueiredo](https://rodrigofigueiredo.dev)
