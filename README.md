@@ -9,7 +9,7 @@ scorecard that cites the moments that earned each score.
 [![CI](https://github.com/eimaieros/cadence/actions/workflows/ci.yml/badge.svg)](https://github.com/eimaieros/cadence/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 ![Python 3.12](https://img.shields.io/badge/python-3.12-blue)
-![66 tests](https://img.shields.io/badge/tests-66-brightgreen)
+![85 tests](https://img.shields.io/badge/tests-85-brightgreen)
 
 Built with FastAPI, PostgreSQL, and Next.js. Runs with no API key.
 
@@ -84,6 +84,26 @@ dimension does not need a migration, and past sessions stay queryable
 ---
 
 ## Decisions worth defending
+
+### The SSE parser has 19 tests, and it needed them
+
+The paragraph below has always said that assuming TCP respects message
+boundaries is the most common SSE bug there is. Until this week the parser it
+describes lived inside the `fetch` call, which made it untestable without
+mocking the network — so it was never tested. A claim about correctness with
+nothing checking it.
+
+Pulling it into [`lib/sse.ts`](frontend/lib/sse.ts) took thirty lines and the
+tests immediately found a real defect. The parser split on `"\n\n"` and
+nothing else, but the specification allows `\r\n` as a line terminator, and
+`"\r\n\r\n"` does not contain `"\n\n"` — there is a `\r` in the middle of
+it. Against a CRLF server or proxy the result was not a dropped event; it was
+that **no event was ever emitted**. Every chunk appended to the buffer, the
+buffer grew for the entire response, and the interface sat empty while the
+server streamed a complete answer.
+
+It works perfectly against uvicorn, which sends `\n\n`. It would break behind
+somebody else's infrastructure, which is where you find it.
 
 ### Why not `EventSource`?
 
@@ -201,7 +221,7 @@ npm run dev
 cd backend && pytest -q
 ```
 
-66 tests. They need `cadence_test` to exist; the schema is dropped and recreated
+66 backend tests. They need `cadence_test` to exist; the schema is dropped and recreated
 per test, so never point `DATABASE_URL` at anything you care about.
 
 ```
