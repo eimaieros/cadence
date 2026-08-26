@@ -74,4 +74,13 @@ jobs:
       - run: npm ci
       - name: Types
         run: npx tsc --noEmit
+
+      # The SSE parser is the one piece of front-end logic the README makes a
+      # correctness claim about — "the single most common SSE bug there is".
+      # It had no test until the parsing was pulled out of the fetch call, and
+      # the first thing the tests found was that a CRLF stream emitted nothing
+      # at all.
+      - name: Tests
+        run: npm test
+
       - run: npm run build

@@ -1,19 +1,17 @@
 {
   "name": "cadence-web",
   "version": "1.0.0",
-  "description": "",
-  "main": "index.js",
+  "description": "Cadence web client — Next.js App Router, Zod at the network boundary, SSE over fetch.",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1",
+    "test": "vitest run",
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
     "typecheck": "tsc --noEmit"
   },
-  "keywords": [],
-  "author": "",
-  "license": "ISC",
-  "private": "true",
+  "author": "Rodrigo Figueiredo",
+  "license": "MIT",
+  "private": true,
   "dependencies": {
     "next": "^16.3.2",
     "react": "^19.2.8",
@@ -26,6 +24,7 @@
     "@types/react": "^19.2.18",
     "@types/react-dom": "^19.2.4",
     "tailwindcss": "^4.3.3",
-    "typescript": "^7.0.2"
+    "typescript": "^7.0.2",
+    "vitest": "^3.2.4"
   }
 }

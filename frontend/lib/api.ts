@@ -1,3 +1,4 @@
+import { SseParser } from "./sse";
 import type { z } from "zod";
 import {
   CostSchema,
@@ -164,46 +165,37 @@ export async function streamQuestion(
 
   const reader = res.body.getReader();
   const decoder = new TextDecoder();
-  let buffer = "";
+  const sse = new SseParser();
+
+  const entregar = (e: { event: string; data: string }) => {
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(e.data);
+    } catch {
+      return;
+    }
+
+    if (e.event === "token") {
+      const r = StreamTokenSchema.safeParse(parsed);
+      if (r.success) handlers.onToken(r.data.text);
+    } else if (e.event === "done") {
+      const r = StreamDoneSchema.safeParse(parsed);
+      if (r.success) handlers.onDone(r.data);
+    } else if (e.event === "error") {
+      const r = StreamErrorSchema.safeParse(parsed);
+      handlers.onError(r.success ? r.data.detail : "The interviewer stopped unexpectedly.");
+    }
+  };
 
   while (true) {
     const { done, value } = await reader.read();
     if (done) break;
-    buffer += decoder.decode(value, { stream: true });
-
-    // Events are separated by a blank line. Anything after the last separator
-    // is a partial event and stays in the buffer for the next chunk — TCP does
-    // not respect message boundaries, and assuming it does is the single most
-    // common SSE bug.
-    const parts = buffer.split("\n\n");
-    buffer = parts.pop() ?? "";
-
-    for (const part of parts) {
-      let event = "message";
-      let data = "";
-      for (const line of part.split("\n")) {
-        if (line.startsWith("event:")) event = line.slice(6).trim();
-        else if (line.startsWith("data:")) data += line.slice(5).trim();
-      }
-      if (!data) continue;
-
-      let parsed: unknown;
-      try {
-        parsed = JSON.parse(data);
-      } catch {
-        continue;
-      }
-
-      if (event === "token") {
-        const r = StreamTokenSchema.safeParse(parsed);
-        if (r.success) handlers.onToken(r.data.text);
-      } else if (event === "done") {
-        const r = StreamDoneSchema.safeParse(parsed);
-        if (r.success) handlers.onDone(r.data);
-      } else if (event === "error") {
-        const r = StreamErrorSchema.safeParse(parsed);
-        handlers.onError(r.success ? r.data.detail : "The interviewer stopped unexpectedly.");
-      }
-    }
+    // stream:true, because a multi-byte character can be split across chunks
+    // exactly like an event can. Decoding each chunk independently turns an
+    // accented word into a replacement character.
+    for (const e of sse.push(decoder.decode(value, { stream: true }))) entregar(e);
   }
+
+  // Whatever the server left unterminated. See SseParser.flush().
+  for (const e of sse.flush()) entregar(e);
 }
