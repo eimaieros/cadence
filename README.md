@@ -9,7 +9,7 @@ scorecard that cites the moments that earned each score.
 [![CI](https://github.com/eimaieros/cadence/actions/workflows/ci.yml/badge.svg)](https://github.com/eimaieros/cadence/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 ![Python 3.12](https://img.shields.io/badge/python-3.12-blue)
-![44 tests](https://img.shields.io/badge/tests-44-brightgreen)
+![66 tests](https://img.shields.io/badge/tests-66-brightgreen)
 
 Built with FastAPI, PostgreSQL, and Next.js. Runs with no API key.
 
@@ -201,7 +201,7 @@ npm run dev
 cd backend && pytest -q
 ```
 
-44 tests. They need `cadence_test` to exist; the schema is dropped and recreated
+66 tests. They need `cadence_test` to exist; the schema is dropped and recreated
 per test, so never point `DATABASE_URL` at anything you care about.
 
 ```
