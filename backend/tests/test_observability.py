@@ -53,13 +53,17 @@ async def test_readiness_fails_closed_when_the_database_is_gone(client, monkeypa
     depends on is not. Killing the process would drop its connection pool and
     its in-flight streams and make the recovery slower.
     """
-    from app import main
+    import app.db as db_module
 
-    class DeadEngine:
-        def connect(self):
+    class DeadFactory:
+        def __call__(self):
             raise OSError("connection refused")
 
-    monkeypatch.setattr(main, "engine", DeadEngine())
+    # Patched where the endpoint actually looks, which is the session factory
+    # requests use — not the engine. An earlier version of this test patched
+    # the engine and passed while the endpoint was reading something else
+    # entirely, which is the same disagreement the endpoint exists to catch.
+    monkeypatch.setattr(db_module, "SessionFactory", DeadFactory())
 
     r = await client.get("/ready")
     assert r.status_code == 503

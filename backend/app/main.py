@@ -8,10 +8,9 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-from sqlalchemy import text
 
 from app.config import settings
-from app.db import engine
+from app.db import database_reachable, engine
 from app.llm.client import build_provider
 from app.observability import RequestIdMiddleware, configure_logging
 from app.routers import auth, sessions
@@ -120,13 +119,12 @@ async def ready() -> JSONResponse:
     out of the load balancer without killing it. When the database comes back,
     the next probe succeeds and traffic returns, with no restart in between.
     """
-    db_ok = True
-    try:
-        async with engine.connect() as conn:
-            await conn.execute(text("SELECT 1"))
-    except Exception:
-        logger.exception("readiness: database unreachable")
-        db_ok = False
+    # Through SessionFactory, not the engine — see app/db.py. Checking a
+    # different connection path than the one requests take is how you get a
+    # probe that reports ready while every request fails.
+    db_ok = await database_reachable()
+    if not db_ok:
+        logger.warning("readiness: database unreachable")
 
     provider = getattr(app.state, "llm", None)
     body = {

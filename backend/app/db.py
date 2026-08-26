@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from collections.abc import AsyncGenerator
 
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
     AsyncSession,
@@ -62,3 +63,31 @@ async def get_db() -> AsyncGenerator[AsyncSession, None]:
         except Exception:
             await session.rollback()
             raise
+
+
+async def database_reachable() -> bool:
+    """Can we get a working connection out of the pool the app actually uses?
+
+    THE POINT OF GOING THROUGH SessionFactory RATHER THAN THE ENGINE.
+
+    The first version of the readiness probe called `engine.connect()` on the
+    module-level engine directly. That looks equivalent and is not: it checks a
+    connection, but not *the* connection path requests take. A readiness probe
+    that passes while every request fails is worse than no probe, because it
+    keeps the replica in the load balancer.
+
+    The test suite proved the point immediately. It builds its own engine bound
+    to the test event loop and overrides the session dependency; the readiness
+    endpoint kept using the module-level engine, and asyncpg refused with
+    "attached to a different loop". The endpoint reported 503 while every other
+    request in the same test worked perfectly, which is exactly the class of
+    disagreement this function exists to eliminate.
+
+    Never raises. The caller wants a boolean, not an exception to catch.
+    """
+    try:
+        async with SessionFactory() as session:
+            await session.execute(text("SELECT 1"))
+        return True
+    except Exception:
+        return False
