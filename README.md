@@ -228,7 +228,8 @@ tests/test_ratelimit_and_evals.py ...... window edges, eval harness structure
 | `GET` | `/sessions/{id}/stream` | **SSE** — next question, token by token |
 | `POST` | `/sessions/{id}/complete` | end and score |
 | `GET` | `/sessions/{id}/cost` | spend against ceiling |
-| `GET` | `/health` | liveness + real database check |
+| `GET` | `/health` | liveness — answers only "is this process alive" |
+| `GET` | `/ready` | readiness — 503 while the database is unreachable |
 
 ### The stream
 
