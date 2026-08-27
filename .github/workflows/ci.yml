@@ -7,6 +7,8 @@ on:
 jobs:
   backend:
     runs-on: ubuntu-latest
+    outputs:
+      contagem: ${{ steps.testes.outputs.contagem }}
 
     # The tests run against real PostgreSQL on purpose. The schema uses JSONB
     # and native enums, so a SQLite suite would pass while production broke —
@@ -40,12 +42,26 @@ jobs:
 
       - run: pip install -r requirements-dev.txt
 
+      # `set -o pipefail`, because in a pipeline the exit status belongs to the
+      # last command and `tee` always succeeds. Without it a suite that failed
+      # every test would report success — which is not a hypothetical: the
+      # sibling portfolio repo shipped `node harness.js | tail -1` and printed
+      # "Tudo passa" while its first check was crashing.
       - name: Tests
+        id: testes
         env:
           DATABASE_URL: postgresql+asyncpg://postgres:postgres@localhost:5432/cadence_test
           TEST_DATABASE_URL: postgresql+asyncpg://postgres:postgres@localhost:5432/cadence_test
           SECRET_KEY: ci-only-not-a-real-secret
-        run: pytest -q
+        run: |
+          set -o pipefail
+          pytest -q | tee /tmp/pytest.txt
+          # Tira as cores antes de ler: se o runner decidir colorir, os codigos
+          # de escape metem-se no meio do numero e a extraccao devolve vazio.
+          sed -r 's/\x1b\[[0-9;]*m//g' /tmp/pytest.txt > /tmp/pytest.limpo
+          n=$(grep -oE '[0-9]+ passed' /tmp/pytest.limpo | tail -1 | grep -oE '[0-9]+')
+          echo "contagem=${n:-0}" >> "$GITHUB_OUTPUT"
+          echo "backend: $n testes"
 
       # The structural tier of the eval harness needs no API key: it asserts
       # that every case validates against the schema, scores inside bounds and
@@ -61,6 +77,8 @@ jobs:
 
   frontend:
     runs-on: ubuntu-latest
+    outputs:
+      contagem: ${{ steps.testes.outputs.contagem }}
     defaults:
       run:
         working-directory: frontend
@@ -81,6 +99,38 @@ jobs:
       # the first thing the tests found was that a CRLF stream emitted nothing
       # at all.
       - name: Tests
-        run: npm test
+        id: testes
+        run: |
+          set -o pipefail
+          npm test | tee /tmp/vitest.txt
+          sed -r 's/\x1b\[[0-9;]*m//g' /tmp/vitest.txt > /tmp/vitest.limpo
+          n=$(grep -oE 'Tests[[:space:]]+[0-9]+ passed' /tmp/vitest.limpo | tail -1 | grep -oE '[0-9]+')
+          echo "contagem=${n:-0}" >> "$GITHUB_OUTPUT"
+          echo "frontend: $n testes"
 
       - run: npm run build
+
+  # ── os números que o README afirma ────────────────────────────────────────
+  #
+  # O README diz quantos testes ha em tres sitios, e os tres querem dizer
+  # coisas diferentes: o cracha e o total, a frase sobre o parser SSE e so o
+  # frontend, e o CONTRIBUTING e so o backend. Nenhum estava a ser re-medido, e
+  # afastaram-se: numa commit o cracha dizia 85 e o CONTRIBUTING dizia 44, que
+  # era a contagem do backend de antes dos testes de observabilidade existirem.
+  #
+  # Este job existe porque as duas suites correm em jobs separados — precisa das
+  # duas contagens ao mesmo tempo, e usa as que os testes imprimiram, nao umas
+  # que voltasse a recolher noutras condicoes.
+  numeros:
+    runs-on: ubuntu-latest
+    needs: [backend, frontend]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+      - name: O README ainda diz o numero certo de testes
+        run: |
+          python3 tools/contagem.py \
+            --backend "${{ needs.backend.outputs.contagem }}" \
+            --frontend "${{ needs.frontend.outputs.contagem }}"
