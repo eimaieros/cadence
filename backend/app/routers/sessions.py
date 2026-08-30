@@ -11,6 +11,7 @@ service does neither: the front end consumes the stream with `fetch` and a
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 from collections.abc import AsyncIterator
@@ -42,6 +43,30 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/sessions", tags=["sessions"])
 
 MAX_QUESTIONS = 6
+
+
+def _advisory_key(session_id) -> int:
+    """Stable signed 64-bit key for PostgreSQL's transaction advisory lock."""
+    return int.from_bytes(
+        hashlib.blake2b(session_id.bytes, digest_size=8).digest(),
+        byteorder="big",
+        signed=True,
+    )
+
+
+async def _lock_session(db, session_id) -> None:
+    """Refuse overlapping mutations across workers instead of racing them.
+
+    The transaction-scoped lock releases automatically on commit, rollback or
+    disconnect. ``try`` is intentional: an API request gets an actionable 409
+    rather than waiting behind an LLM call for an unbounded amount of time.
+    """
+    locked = await db.scalar(select(func.pg_try_advisory_xact_lock(_advisory_key(session_id))))
+    if not locked:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Another operation is already running for this session.",
+        )
 
 
 def _sse(event: str, data: dict) -> str:
@@ -121,6 +146,7 @@ async def get_session(session: OwnedSession) -> InterviewSession:
 
 @router.delete("/{session_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_session(session: OwnedSession, db: DbSession) -> None:
+    await _lock_session(db, session.id)
     await db.delete(session)
 
 
@@ -143,6 +169,8 @@ async def get_cost(session: OwnedSession) -> CostState:
 async def submit_answer(
     payload: AnswerCreate, session: OwnedSession, db: DbSession
 ) -> Turn:
+    await _lock_session(db, session.id)
+    await db.refresh(session, attribute_names=["status"])
     if session.status is not SessionStatus.active:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT, detail="This session is already closed"
@@ -167,6 +195,8 @@ async def stream_question(
     request: Request, session: OwnedSession, db: DbSession
 ) -> StreamingResponse:
     """Stream the interviewer's next question, token by token."""
+    await _lock_session(db, session.id)
+    await db.refresh(session, attribute_names=["status", "cost_usd", "turns"])
     if session.status is not SessionStatus.active:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT, detail="This session is already closed"
@@ -281,6 +311,8 @@ async def stream_question(
 async def complete_session(
     request: Request, session: OwnedSession, db: DbSession
 ) -> Scorecard:
+    await _lock_session(db, session.id)
+    await db.refresh(session, attribute_names=["status", "scorecard", "turns"])
     if session.status is SessionStatus.completed and session.scorecard is not None:
         return session.scorecard
 

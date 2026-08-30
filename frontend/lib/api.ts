@@ -196,6 +196,9 @@ export async function streamQuestion(
     for (const e of sse.push(decoder.decode(value, { stream: true }))) entregar(e);
   }
 
+  // Flush TextDecoder's internal UTF-8 state before flushing the SSE parser.
+  // The final code point may straddle the last two network chunks.
+  for (const e of sse.push(decoder.decode())) entregar(e);
   // Whatever the server left unterminated. See SseParser.flush().
   for (const e of sse.flush()) entregar(e);
 }

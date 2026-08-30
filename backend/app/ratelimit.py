@@ -33,13 +33,30 @@ class SlidingWindowLimiter:
     """
 
     def __init__(self, limit: int, window_seconds: float) -> None:
+        if isinstance(limit, bool) or not isinstance(limit, int) or limit <= 0:
+            raise ValueError("limit must be a positive integer")
+        if not isinstance(window_seconds, (int, float)) or window_seconds <= 0:
+            raise ValueError("window_seconds must be positive")
         self.limit = limit
         self.window = window_seconds
         self._hits: dict[str, deque[float]] = defaultdict(deque)
+        self._checks = 0
+
+    def _sweep(self, now: float) -> None:
+        """Drop inactive identities so random bearer tokens cannot grow RAM forever."""
+        stale = [
+            key for key, hits in self._hits.items()
+            if not hits or now - hits[-1] > self.window
+        ]
+        for key in stale:
+            self._hits.pop(key, None)
 
     def check(self, key: str) -> tuple[bool, float]:
         """Return (allowed, seconds_until_retry)."""
         now = time.monotonic()
+        self._checks += 1
+        if self._checks % 256 == 0:
+            self._sweep(now)
         hits = self._hits[key]
 
         while hits and now - hits[0] > self.window:
@@ -53,6 +70,7 @@ class SlidingWindowLimiter:
 
     def reset(self) -> None:
         self._hits.clear()
+        self._checks = 0
 
 
 def client_key(request: Request) -> str:

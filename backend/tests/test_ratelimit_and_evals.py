@@ -50,6 +50,24 @@ async def test_limiter_window_slides(monkeypatch):
     assert limiter.check("a")[0] is True, "hits older than the window should expire"
 
 
+async def test_limiter_sweeps_inactive_identity_keys(monkeypatch):
+    clock = {"now": 0.0}
+    monkeypatch.setattr("app.ratelimit.time.monotonic", lambda: clock["now"])
+    limiter = SlidingWindowLimiter(limit=2, window_seconds=10)
+    for i in range(255):
+        limiter.check(f"discarded-token-{i}")
+    clock["now"] = 11.0
+    limiter.check("current")  # check 256 triggers the bounded sweep
+    assert set(limiter._hits) == {"current"}
+
+
+async def test_limiter_rejects_invalid_configuration():
+    with pytest.raises(ValueError):
+        SlidingWindowLimiter(limit=0, window_seconds=60)
+    with pytest.raises(ValueError):
+        SlidingWindowLimiter(limit=1, window_seconds=0)
+
+
 async def test_register_route_is_rate_limited(client):
     """Sixth registration inside the window is refused."""
     from app.ratelimit import register_limit
