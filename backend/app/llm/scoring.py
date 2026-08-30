@@ -42,16 +42,23 @@ class ScoreDraft(BaseModel):
 
     overall: int = Field(ge=0, le=100)
     summary: str = Field(min_length=1, max_length=1200)
-    dimensions: list[DimensionScore] = Field(min_length=1, max_length=8)
+    dimensions: list[DimensionScore] = Field(
+        min_length=len(EXPECTED_DIMENSIONS), max_length=len(EXPECTED_DIMENSIONS)
+    )
     strengths: list[str] = Field(default_factory=list, max_length=8)
     gaps: list[str] = Field(default_factory=list, max_length=8)
 
     @field_validator("dimensions")
     @classmethod
     def _known_dimensions(cls, v: list[DimensionScore]) -> list[DimensionScore]:
-        unknown = {d.name for d in v} - EXPECTED_DIMENSIONS
-        if unknown:
-            raise ValueError(f"unexpected dimensions: {sorted(unknown)}")
+        names = {d.name for d in v}
+        if names != EXPECTED_DIMENSIONS:
+            missing = EXPECTED_DIMENSIONS - names
+            unknown = names - EXPECTED_DIMENSIONS
+            raise ValueError(
+                f"dimensions must match the rubric exactly; "
+                f"missing={sorted(missing)}, unexpected={sorted(unknown)}"
+            )
         return v
 
 

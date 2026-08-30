@@ -35,8 +35,8 @@ def hash_password(plain: str) -> str:
 
     bcrypt only considers the first 72 bytes. Truncating silently would mean two
     different long passwords hash identically, so this refuses instead. The
-    schema caps passwords at 128 characters, which is where this is enforced for
-    real users -- this is the backstop.
+    schema checks both characters and UTF-8 bytes for real users -- this is the
+    backstop for internal callers.
     """
     raw = plain.encode("utf-8")
     if len(raw) > 72:

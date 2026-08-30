@@ -146,7 +146,7 @@ export default function Home() {
 
       <footer className="flex flex-wrap items-center justify-between gap-3 pt-8">
         <p className="label">Cadence — built with FastAPI, PostgreSQL and Next.js</p>
-        <p className="label">Every session has a hard cost ceiling</p>
+        <p className="label">Every session has a spend guardrail</p>
       </footer>
     </main>
   );

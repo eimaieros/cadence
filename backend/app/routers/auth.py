@@ -22,6 +22,10 @@ from app.security import (
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
+# One hash at process startup, rather than generating a new expensive bcrypt
+# hash for every unknown email before doing the comparison.
+DUMMY_PASSWORD_HASH = hash_password("not-a-real-password")
+
 
 def _tokens_for(user: User) -> TokenPair:
     return TokenPair(
@@ -65,7 +69,7 @@ async def login(payload: UserLogin, db: DbSession) -> TokenPair:
     # Verify against a dummy hash when the user is missing so the response time
     # does not reveal whether the address exists.
     if user is None:
-        verify_password(payload.password, hash_password("not-a-real-password"))
+        verify_password(payload.password, DUMMY_PASSWORD_HASH)
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED, detail="Incorrect email or password"
         )

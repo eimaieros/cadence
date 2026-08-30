@@ -8,8 +8,8 @@ Design notes worth defending out loud:
 * Primary keys are UUIDs rather than sequential integers. That is defence in
   depth, not an access control -- authorisation is still checked explicitly --
   but it removes the "increment the id and see what happens" class of probing.
-* Money is tracked in `cost_usd` per turn and summed per session so the ceiling
-  can be enforced before a call is made, not discovered on the invoice.
+* Money is tracked in `cost_usd` per turn and summed per session so new
+  interview calls can be stopped at the configured spend guardrail.
 """
 
 from __future__ import annotations

@@ -78,6 +78,34 @@ async def test_short_password_rejected(client):
     assert resp.status_code == 422
 
 
+async def test_password_limit_is_bytes_not_characters(client):
+    # Forty non-ASCII characters are only forty code points but eighty UTF-8
+    # bytes. bcrypt's limit is bytes, so a character-only check still crashes.
+    resp = await client.post(
+        "/auth/register",
+        json={"email": "bytes@example.com", "password": "é" * 40, "display_name": "Bytes"},
+    )
+    assert resp.status_code == 422
+
+    login = await client.post(
+        "/auth/login",
+        json={"email": "bytes@example.com", "password": "é" * 40},
+    )
+    assert login.status_code == 422
+
+
+async def test_blank_display_name_rejected(client):
+    resp = await client.post(
+        "/auth/register",
+        json={
+            "email": "blank@example.com",
+            "password": "a-long-enough-password",
+            "display_name": "   ",
+        },
+    )
+    assert resp.status_code == 422
+
+
 async def test_refresh_token_cannot_be_used_as_access_token(client):
     """Token type confusion.
 

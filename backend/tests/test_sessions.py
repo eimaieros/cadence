@@ -70,6 +70,16 @@ async def test_too_many_focus_areas_rejected(auth_client):
     assert resp.status_code == 422
 
 
+async def test_blank_role_title_rejected(auth_client):
+    resp = await auth_client.post("/sessions", json={**NEW_SESSION, "role_title": "   "})
+    assert resp.status_code == 422
+
+
+async def test_negative_pagination_offset_rejected(auth_client):
+    resp = await auth_client.get("/sessions?offset=-1")
+    assert resp.status_code == 422
+
+
 # --- Tenancy isolation ----------------------------------------------------
 
 
@@ -138,6 +148,21 @@ async def test_streamed_question_is_persisted(auth_client):
     assert len(detail["turns"][0]["content"]) > 20
 
 
+async def test_question_limit_blocks_the_seventh_question(auth_client):
+    session_id = await _create(auth_client)
+    for i in range(6):
+        await _consume_stream(auth_client, session_id)
+        if i < 5:
+            answer = await auth_client.post(
+                f"/sessions/{session_id}/answers",
+                json={"content": f"Answer {i + 1} with enough detail."},
+            )
+            assert answer.status_code == 201
+
+    blocked = await auth_client.get(f"/sessions/{session_id}/stream")
+    assert blocked.status_code == 409
+
+
 async def test_cost_accumulates_across_turns(auth_client):
     session_id = await _create(auth_client)
     before = (await auth_client.get(f"/sessions/{session_id}/cost")).json()
@@ -172,9 +197,12 @@ async def test_answer_length_is_bounded(auth_client):
     assert resp.status_code == 422
 
 
-async def test_empty_answer_rejected(auth_client):
+@pytest.mark.parametrize("content", ["", "   "])
+async def test_empty_answer_rejected(auth_client, content):
     session_id = await _create(auth_client)
-    resp = await auth_client.post(f"/sessions/{session_id}/answers", json={"content": ""})
+    resp = await auth_client.post(
+        f"/sessions/{session_id}/answers", json={"content": content}
+    )
     assert resp.status_code == 422
 
 

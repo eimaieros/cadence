@@ -36,6 +36,7 @@ export interface SseEvent {
 
 export class SseParser {
   private buffer = "";
+  private pendingCR = false;
 
   /**
    * Feed one chunk. Returns the events that are now complete.
@@ -45,10 +46,22 @@ export class SseParser {
    * assuming it does is what this class exists to not do.
    */
   push(chunk: string): SseEvent[] {
-    // Normalise first, so every downstream split has one thing to look for.
-    // Doing it here rather than in the split means a `\r` cannot survive into
-    // a field value either, where it would end up inside a JSON string.
-    this.buffer += chunk.replace(/\r\n?/g, "\n");
+    // A CRLF pair can itself be split across network chunks. Hold a trailing
+    // CR until the next push so it cannot become one newline here plus a
+    // second newline at the start of the next chunk (which would manufacture
+    // a blank line and dispatch an event too early).
+    let normalised = "";
+    if (this.pendingCR) {
+      normalised = "\n";
+      if (chunk.startsWith("\n")) chunk = chunk.slice(1);
+      this.pendingCR = false;
+    }
+    if (chunk.endsWith("\r")) {
+      this.pendingCR = true;
+      chunk = chunk.slice(0, -1);
+    }
+    normalised += chunk.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+    this.buffer += normalised;
 
     const parts = this.buffer.split("\n\n");
     this.buffer = parts.pop() ?? "";
@@ -71,6 +84,10 @@ export class SseParser {
    * answer of a conversation is a bad way to end one.
    */
   flush(): SseEvent[] {
+    if (this.pendingCR) {
+      this.buffer += "\n";
+      this.pendingCR = false;
+    }
     const resto = this.buffer;
     this.buffer = "";
     const e = resto.trim() ? parseFrame(resto) : null;

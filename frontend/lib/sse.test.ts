@@ -116,6 +116,14 @@ describe("line endings", () => {
     ]);
   });
 
+  it("keeps a CRLF pair intact when the chunk boundary splits it", () => {
+    const p = new SseParser();
+    expect(p.push("event: token\r")).toEqual([]);
+    expect(p.push('\ndata: {"t":"hi"}\r\n\r\n')).toEqual([
+      { event: "token", data: '{"t":"hi"}' },
+    ]);
+  });
+
   it("reads bare CR", () => {
     expect(feed(['event: token\rdata: {"t":"hi"}\r\r'])).toEqual([
       { event: "token", data: '{"t":"hi"}' },

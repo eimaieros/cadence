@@ -192,7 +192,7 @@ export default function InterviewRoom() {
               <span
                 className="tabular text-[0.64rem]"
                 style={{ color: "var(--color-mute)" }}
-                title="Spend on this session against its hard ceiling"
+                title="Recorded spend on this session against its guardrail"
               >
                 ${cost.spent.toFixed(4)} / ${cost.ceiling.toFixed(2)}
               </span>

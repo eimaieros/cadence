@@ -25,8 +25,8 @@ suite needs a live PostgreSQL and the frontend suite needs node_modules; they
 run in separate CI jobs, and the honest number is the one those runs printed,
 not one this script could produce by re-collecting under different conditions.
 
-    python3 tools/contagem.py --backend 70 --frontend 19
-    python3 tools/contagem.py --backend 70 --frontend 19 --fix
+    python3 tools/contagem.py --backend 81 --frontend 20
+    python3 tools/contagem.py --backend 81 --frontend 20 --fix
 """
 
 from __future__ import annotations
