@@ -32,12 +32,29 @@ class UserCreate(BaseModel):
         # rule set with the client; length is the part that actually matters.
         if v.lower() in {"password12", "passwordpassword", "1234567890"}:
             raise ValueError("password is too common")
+        if len(v.encode("utf-8")) > 72:
+            raise ValueError("password must be at most 72 UTF-8 bytes")
         return v
+
+    @field_validator("display_name")
+    @classmethod
+    def _clean_display_name(cls, v: str) -> str:
+        cleaned = v.strip()
+        if not cleaned:
+            raise ValueError("display name cannot be blank")
+        return cleaned
 
 
 class UserLogin(BaseModel):
     email: EmailStr
-    password: str
+    password: Annotated[str, Field(min_length=1, max_length=72)]
+
+    @field_validator("password")
+    @classmethod
+    def _within_bcrypt_limit(cls, v: str) -> str:
+        if len(v.encode("utf-8")) > 72:
+            raise ValueError("password must be at most 72 UTF-8 bytes")
+        return v
 
 
 class UserOut(BaseModel):
@@ -67,8 +84,16 @@ SENIORITIES = ("junior", "mid", "senior", "staff")
 
 class SessionCreate(BaseModel):
     role_title: Annotated[str, Field(min_length=2, max_length=160)]
-    focus_areas: Annotated[list[str], Field(max_length=6)] = []
+    focus_areas: list[str] = Field(default_factory=list, max_length=6)
     seniority: Literal["junior", "mid", "senior", "staff"] = "mid"
+
+    @field_validator("role_title")
+    @classmethod
+    def _clean_role_title(cls, v: str) -> str:
+        cleaned = v.strip()
+        if len(cleaned) < 2:
+            raise ValueError("role title cannot be blank")
+        return cleaned
 
     @field_validator("focus_areas")
     @classmethod
@@ -91,6 +116,13 @@ class TurnOut(BaseModel):
 
 class AnswerCreate(BaseModel):
     content: Annotated[str, Field(min_length=1, max_length=8000)]
+
+    @field_validator("content")
+    @classmethod
+    def _not_blank(cls, v: str) -> str:
+        if not v.strip():
+            raise ValueError("answer cannot be blank")
+        return v
 
 
 class DimensionScore(BaseModel):

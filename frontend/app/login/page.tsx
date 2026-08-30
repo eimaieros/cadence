@@ -16,8 +16,12 @@ const Credentials = z.object({
   password: z
     .string()
     .min(10, "Passwords need at least 10 characters.")
-    .max(72, "Passwords can be at most 72 characters."),
-  display_name: z.string().min(1, "Tell us what to call you.").max(120).optional(),
+    .max(72, "Passwords can be at most 72 characters.")
+    .refine(
+      (value) => new TextEncoder().encode(value).length <= 72,
+      "Passwords can be at most 72 UTF-8 bytes.",
+    ),
+  display_name: z.string().trim().min(1, "Tell us what to call you.").max(120).optional(),
 });
 
 export default function LoginPage() {

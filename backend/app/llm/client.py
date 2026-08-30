@@ -12,9 +12,10 @@ The provider is chosen once at startup and injected, which is what makes the
 tests deterministic: they assert on transport and persistence behaviour, not on
 what a model happened to say that afternoon.
 
-Cost note: prices are hardcoded estimates for accounting only. They exist so
-the ceiling can be enforced, not to produce an invoice. Confirm current prices
-at https://docs.claude.com/en/docs/about-claude/pricing before relying on them.
+Cost note: prices are hardcoded estimates for accounting only. They feed the
+recorded-spend guardrail, not an invoice or a hard reservation. Confirm current
+prices at https://docs.claude.com/en/docs/about-claude/pricing before relying on
+them.
 """
 
 from __future__ import annotations
@@ -40,6 +41,7 @@ PRICES: dict[str, tuple[float, float]] = {
     "claude-opus-5": (5.0, 25.0),
 }
 _FALLBACK_PRICE = (3.0, 15.0)
+_RETRYABLE_STATUS = {429, 500, 502, 503, 529}
 
 
 def estimate_cost(model: str, input_tokens: int, output_tokens: int) -> float:
@@ -113,6 +115,16 @@ class AnthropicProvider:
         """
         return random.uniform(0, min(2**attempt, 16))
 
+    @staticmethod
+    def _retryable(exc: Exception) -> bool:
+        if isinstance(exc, httpx.TransportError):
+            return True
+        if isinstance(exc, httpx.HTTPStatusError):
+            return exc.response.status_code in _RETRYABLE_STATUS
+        # A truncated upstream event before any token was emitted is safe to
+        # retry; once chunks exist the stream path returns the partial result.
+        return isinstance(exc, json.JSONDecodeError)
+
     async def stream(
         self, *, system: str, messages: list[dict], model: str, result: StreamResult
     ) -> AsyncIterator[str]:
@@ -130,7 +142,7 @@ class AnthropicProvider:
             usage = Usage(model=model)
             try:
                 async with self._client.stream("POST", API_URL, json=payload) as response:
-                    if response.status_code in (429, 500, 502, 503, 529):
+                    if response.status_code in _RETRYABLE_STATUS:
                         await response.aread()
                         raise httpx.HTTPStatusError(
                             f"retryable upstream status {response.status_code}",
@@ -174,6 +186,10 @@ class AnthropicProvider:
                     result.text = "".join(chunks)
                     result.usage = usage
                     return
+                if not self._retryable(exc):
+                    raise LLMError(
+                        f"model stream rejected the request: {exc}"
+                    ) from exc
                 if attempt < self._max_attempts - 1:
                     await asyncio.sleep(self._backoff(attempt))
                     continue
@@ -192,25 +208,58 @@ class AnthropicProvider:
         for attempt in range(self._max_attempts):
             try:
                 response = await self._client.post(API_URL, json=payload)
-                if response.status_code in (429, 500, 502, 503, 529):
+                if response.status_code in _RETRYABLE_STATUS:
                     raise httpx.HTTPStatusError(
                         f"retryable upstream status {response.status_code}",
                         request=response.request,
                         response=response,
                     )
                 response.raise_for_status()
-                body = response.json()
-                text = "".join(
-                    block.get("text", "") for block in body.get("content", []) if block.get("type") == "text"
-                )
+                try:
+                    body = response.json()
+                except json.JSONDecodeError as exc:
+                    raise LLMError("model returned an invalid JSON response") from exc
+                if not isinstance(body, dict):
+                    raise LLMError("model returned an unexpected response shape")
+                content = body.get("content")
                 u = body.get("usage", {})
+                if not isinstance(content, list) or not isinstance(u, dict):
+                    raise LLMError("model returned an unexpected response shape")
+
+                pieces: list[str] = []
+                for block in content:
+                    if not isinstance(block, dict):
+                        raise LLMError("model returned an unexpected response shape")
+                    if block.get("type") == "text":
+                        piece = block.get("text")
+                        if not isinstance(piece, str):
+                            raise LLMError("model returned an unexpected response shape")
+                        pieces.append(piece)
+
+                input_tokens = u.get("input_tokens", 0)
+                output_tokens = u.get("output_tokens", 0)
+                if (
+                    not isinstance(input_tokens, int)
+                    or isinstance(input_tokens, bool)
+                    or input_tokens < 0
+                    or not isinstance(output_tokens, int)
+                    or isinstance(output_tokens, bool)
+                    or output_tokens < 0
+                ):
+                    raise LLMError("model returned an unexpected response shape")
+
+                text = "".join(pieces)
                 return text, Usage(
-                    input_tokens=u.get("input_tokens", 0),
-                    output_tokens=u.get("output_tokens", 0),
+                    input_tokens=input_tokens,
+                    output_tokens=output_tokens,
                     model=model,
                 )
             except (httpx.HTTPStatusError, httpx.TransportError) as exc:
                 last_error = exc
+                if not self._retryable(exc):
+                    raise LLMError(
+                        f"model call rejected the request: {exc}"
+                    ) from exc
                 if attempt < self._max_attempts - 1:
                     await asyncio.sleep(self._backoff(attempt))
 

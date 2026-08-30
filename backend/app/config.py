@@ -49,8 +49,9 @@ class Settings(BaseSettings):
     llm_model_scorer: str = "claude-haiku-4-5-20251001"
     llm_max_tokens: int = 1024
 
-    # Hard ceiling per session. An autonomous loop against a paid API does not
-    # fail loudly -- it fails expensively and quietly. This is the circuit breaker.
+    # Recorded-spend cutoff for new interview calls. One in-flight call can
+    # cross it and final scoring remains available, so this is intentionally
+    # named/configured as a guardrail rather than claimed as a reservation.
     session_cost_ceiling_usd: float = 0.50
 
     # --- CORS -------------------------------------------------------------

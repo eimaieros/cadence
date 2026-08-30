@@ -15,15 +15,16 @@ import json
 import logging
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime
+from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from fastapi.responses import StreamingResponse
 from sqlalchemy import desc, func, select
 
 from app.config import settings
 from app.deps import CurrentUser, DbSession, OwnedSession
 from app.llm.client import LLMError, StreamResult
-from app.llm.prompts import interviewer_system
+from app.llm.prompts import interviewer_context, interviewer_system
 from app.llm.scoring import ScoringError, score_transcript
 from app.models import InterviewSession, Scorecard, SessionStatus, Speaker, Turn
 from app.ratelimit import session_create_limit, stream_limit
@@ -95,9 +96,11 @@ async def create_session(
 
 @router.get("", response_model=list[SessionSummary])
 async def list_sessions(
-    user: CurrentUser, db: DbSession, limit: int = 20, offset: int = 0
+    user: CurrentUser,
+    db: DbSession,
+    limit: Annotated[int, Query(ge=1, le=100)] = 20,
+    offset: Annotated[int, Query(ge=0)] = 0,
 ) -> list[InterviewSession]:
-    limit = max(1, min(limit, 100))
     stmt = (
         select(InterviewSession)
         .where(InterviewSession.user_id == user.id)
@@ -169,29 +172,34 @@ async def stream_question(
             status_code=status.HTTP_409_CONFLICT, detail="This session is already closed"
         )
 
-    # Enforce the ceiling BEFORE spending, not after. Checking afterwards means
-    # the limit is a report rather than a control.
+    # Stop starting interview calls once recorded spend reaches the cutoff.
+    # This is a guardrail, not a reservation: the call already in flight can
+    # cross it, and the final scoring call is deliberately still available.
     if session.cost_usd >= settings.session_cost_ceiling_usd:
         raise HTTPException(
             status_code=status.HTTP_402_PAYMENT_REQUIRED,
-            detail="This session has reached its cost ceiling. End it to see your scorecard.",
+            detail="This session has reached its spend guardrail. End it to see your scorecard.",
         )
 
     turns = list(session.turns)
     asked = sum(1 for t in turns if t.speaker == Speaker.interviewer)
-    if asked > MAX_QUESTIONS:
+    if asked >= MAX_QUESTIONS:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail="This interview has run its course. End it to see your scorecard.",
         )
 
     provider = request.app.state.llm
-    system = interviewer_system(
-        session.role_title, session.seniority, session.focus_areas, MAX_QUESTIONS
-    )
-    messages = _build_messages(turns)
-    if not messages:
-        messages = [{"role": "user", "content": "I'm ready to start."}]
+    system = interviewer_system(MAX_QUESTIONS)
+    messages = [
+        {
+            "role": "user",
+            "content": interviewer_context(
+                session.role_title, session.seniority, session.focus_areas
+            ),
+        },
+        *_build_messages(turns),
+    ]
 
     next_index = (max((t.index for t in turns), default=-1)) + 1
     session_id = session.id

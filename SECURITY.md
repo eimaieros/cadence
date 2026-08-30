@@ -33,15 +33,16 @@ mapping the id space. Four tests cover this — read, delete, answer, stream.
 
 **Prompt injection.** A tool that takes free text from a user and feeds it to a
 model that also decides how to score them is an injection target by
-construction. Two layers, in `app/llm/prompts.py`: instructions live only in the
-system prompt and candidate text only ever occupies a user turn, wrapped in a
-delimiter and labelled as transcript; and the scorer must answer in a fixed JSON
-schema validated afterwards with bounds enforced in code. Neither layer is
-sufficient alone, and both are there.
+construction. Two layers, in `app/llm/prompts.py`: the live interviewer's system
+prompt is fixed while role context and candidate answers stay in user-role
+messages; and the scorer receives a delimited transcript and must answer in a
+fixed JSON schema validated afterwards with bounds enforced in code. Neither
+layer is sufficient alone, and both are there.
 
-**Cost.** The per-session ceiling is checked *before* each call, not after. An
-autonomous process against a paid API does not fail loudly — it fails
-expensively and quietly.
+**Cost.** Recorded spend is checked before each new interview call. This is a
+guardrail, not a hard reservation: an in-flight call can cross the threshold,
+and the final scoring call remains available so a user is not locked out of the
+result they already paid to generate.
 
 **Password hashing.** bcrypt directly rather than through passlib, which has had
 no release since 2020 and raises against bcrypt ≥ 4.1. One fewer unmaintained
@@ -57,7 +58,7 @@ These are real and they are not fixed:
 - **Rate limiting bounds one instance.** `app/ratelimit.py` is an in-process
   sliding window. Behind two replicas a caller gets twice the budget, and a
   restart clears every window. The expensive path is separately bounded by the
-  cost ceiling, which lives in the database.
+  recorded-spend guardrail, which lives in the database.
 - **No account lockout or CAPTCHA.** The rate limiter slows credential stuffing;
   it does not stop a patient attacker.
 - **Secrets come from the environment.** `.env.example` ships defaults that are

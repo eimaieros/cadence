@@ -5,8 +5,8 @@ instance. Behind two replicas a caller gets twice the budget, and a restart
 clears every window.
 
 That is a deliberate trade, not an oversight. The expensive path here is already
-bounded by the per-session cost ceiling, which is enforced in the database and
-therefore survives both restarts and horizontal scaling. This limiter exists for
+guarded by a per-session recorded-spend cutoff in the database, which survives
+both restarts and horizontal scaling. This limiter exists for
 the cheaper abuse it does not cover -- registration spam, login brute force, and
 someone opening sessions in a loop.
 

@@ -9,7 +9,7 @@ scorecard that cites the moments that earned each score.
 [![CI](https://github.com/eimaieros/cadence/actions/workflows/ci.yml/badge.svg)](https://github.com/eimaieros/cadence/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 ![Python 3.12](https://img.shields.io/badge/python-3.12-blue)
-![89 tests](https://img.shields.io/badge/tests-89-brightgreen)
+![101 tests](https://img.shields.io/badge/tests-101-brightgreen)
 
 Built with FastAPI, PostgreSQL, and Next.js. Runs with no API key.
 
@@ -34,7 +34,7 @@ the parts I actually built:
 |---|---|
 | **Token streaming over SSE** | Questions arrive a word at a time over `text/event-stream`, consumed with `fetch` + `ReadableStream` rather than `EventSource` — see [below](#why-not-eventsource) for why that matters. |
 | **Structured output, validated** | The scorer is told to return JSON. That JSON is parsed and validated against a Pydantic model with bounded score ranges. Validation failure is a retry with the error fed back, not a shrug. |
-| **A hard cost ceiling** | Checked before each call, not after. An autonomous process against a paid API does not fail loudly — it fails expensively and quietly. |
+| **A spend guardrail** | Recorded spend is checked before each new interview call. An in-flight call can cross the threshold and final scoring remains available, so this is deliberately not marketed as a hard reservation. |
 | **Prompt injection treated as real** | Candidate text is data, never instructions. It never touches the system prompt. |
 | **Tenancy enforced in one place** | Every session route resolves through one ownership dependency. There is no handler that can forget. |
 | **Tests against real PostgreSQL** | The schema uses JSONB and native enums. A SQLite test suite would pass while production broke. |
@@ -85,7 +85,7 @@ dimension does not need a migration, and past sessions stay queryable
 
 ## Decisions worth defending
 
-### The SSE parser has 19 tests, and it needed them
+### The SSE parser has 20 tests, and it needed them
 
 The paragraph below has always said that assuming TCP respects message
 boundaries is the most common SSE bug there is. Until this week the parser it
@@ -172,10 +172,11 @@ would work.
 
 Two layers, in [`app/llm/prompts.py`](backend/app/llm/prompts.py):
 
-1. Instructions live in the system prompt. Candidate text only ever occupies a
-   user-turn, wrapped in a delimiter, with an explicit note that its contents
-   are transcript rather than direction. Speaker labels come from an enum, so a
-   candidate cannot forge an `Interviewer:` line inside their own answer.
+1. The live system prompt is fixed. User-selected role context and candidate
+   text only occupy user-role messages, so neither is promoted into the
+   instruction channel. For scoring, the transcript is delimited and speaker
+   labels come from an enum, so a candidate cannot forge a real interviewer
+   turn inside an answer.
 2. The scorer must answer in a fixed JSON schema that is validated afterwards,
    with score bounds enforced in code. A successful injection would still have
    to produce schema-valid output.
@@ -221,7 +222,7 @@ npm run dev
 cd backend && pytest -q
 ```
 
-66 backend tests. They need `cadence_test` to exist; the schema is dropped and recreated
+81 backend tests. They need `cadence_test` to exist; the schema is dropped and recreated
 per test, so never point `DATABASE_URL` at anything you care about.
 
 ```
@@ -247,7 +248,7 @@ tests/test_ratelimit_and_evals.py ...... window edges, eval harness structure
 | `POST` | `/sessions/{id}/answers` | submit an answer |
 | `GET` | `/sessions/{id}/stream` | **SSE** — next question, token by token |
 | `POST` | `/sessions/{id}/complete` | end and score |
-| `GET` | `/sessions/{id}/cost` | spend against ceiling |
+| `GET` | `/sessions/{id}/cost` | recorded spend against guardrail |
 | `GET` | `/health` | liveness — answers only "is this process alive" |
 | `GET` | `/ready` | readiness — 503 while the database is unreachable |
 
@@ -293,8 +294,9 @@ Honest about what this is not:
 - **Rate limiting is in-process.** `app/ratelimit.py` is a sliding window that
   bounds one instance. Behind two replicas a caller gets twice the budget, and a
   restart clears every window. That is a deliberate trade: the expensive path is
-  already bounded by the per-session cost ceiling, which lives in the database
-  and therefore survives both. This limiter covers the cheaper abuse — signup
+  separately guarded by a recorded-spend cutoff, which lives in the database
+  and therefore survives both. A single in-flight call may cross that cutoff;
+  it is not a reservation. This limiter covers the cheaper abuse — signup
   spam, login brute force, opening sessions in a loop. Moving to Redis is a swap
   of one dict for a sorted set; the reason not to yet is that it adds a service
   to the compose file for a product with one instance.
