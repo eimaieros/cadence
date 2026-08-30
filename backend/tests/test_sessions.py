@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+
 import pytest
 
 pytestmark = pytest.mark.asyncio
@@ -146,6 +148,39 @@ async def test_streamed_question_is_persisted(auth_client):
     assert detail["turns"][0]["speaker"] == "interviewer"
     assert detail["turns"][0]["index"] == 0
     assert len(detail["turns"][0]["content"]) > 20
+
+
+async def test_a_stream_locks_out_overlapping_session_mutations(auth_client, app):
+    """Two workers must not allocate the same turn index or bill twice."""
+    from app.llm.client import Usage
+
+    started = asyncio.Event()
+    release = asyncio.Event()
+
+    class BlockingProvider:
+        name = "blocking-test"
+
+        async def stream(self, *, system, messages, model, result):
+            started.set()
+            await release.wait()
+            result.text = "Tell me about a production incident."
+            result.usage = Usage(model=model, input_tokens=1, output_tokens=1)
+            yield result.text
+
+    app.state.llm = BlockingProvider()
+    session_id = await _create(auth_client)
+    first = asyncio.create_task(auth_client.get(f"/sessions/{session_id}/stream"))
+    await asyncio.wait_for(started.wait(), timeout=2)
+
+    blocked = await auth_client.post(
+        f"/sessions/{session_id}/answers", json={"content": "A racing answer."}
+    )
+    assert blocked.status_code == 409
+    assert "already running" in blocked.json()["detail"]
+
+    release.set()
+    response = await asyncio.wait_for(first, timeout=2)
+    assert response.status_code == 200
 
 
 async def test_question_limit_blocks_the_seventh_question(auth_client):

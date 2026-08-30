@@ -9,7 +9,7 @@ scorecard that cites the moments that earned each score.
 [![CI](https://github.com/eimaieros/cadence/actions/workflows/ci.yml/badge.svg)](https://github.com/eimaieros/cadence/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 ![Python 3.12](https://img.shields.io/badge/python-3.12-blue)
-![101 tests](https://img.shields.io/badge/tests-101-brightgreen)
+![112 tests](https://img.shields.io/badge/tests-112-brightgreen)
 
 Built with FastAPI, PostgreSQL, and Next.js. Runs with no API key.
 
@@ -132,15 +132,21 @@ inside an `async def` (a sync driver, `requests`, `time.sleep`) stalls the entir
 loop and the app falls over under load while looking fine in development. There
 is no blocking I/O in any `async def` in this codebase.
 
-### The streaming endpoint opens its own database session
+### One interview, one mutation at a time
 
-The request-scoped session from `Depends(get_db)` is committed and closed when
-the dependency's scope exits — which happens *before* the streaming generator
-finishes producing output. So the generator opens its own session to persist the
-completed turn. This is the kind of thing that works fine in testing and
-deadlocks under concurrency if you get it wrong, so
-[`test_streamed_question_is_persisted`](backend/tests/test_sessions.py) exists
-specifically to prove the write lands.
+Every mutating session route takes a PostgreSQL transaction advisory lock keyed
+to the interview UUID. A second stream, answer, completion or delete gets an
+immediate `409` instead of racing for the same turn index, producing two
+scorecards or charging twice. The lock belongs to the transaction, so Postgres
+releases it on commit, rollback, disconnect or process failure; no cleanup job
+or in-process mutex is involved, and it works across replicas.
+
+The streaming request intentionally holds that lock until its generator ends.
+The completed turn is persisted through a separate short database session so
+the `done` event is emitted only after the write is committed. The suite proves
+both halves: [`test_streamed_question_is_persisted`](backend/tests/test_sessions.py)
+checks the write lands, and the concurrency test holds one stream open while an
+overlapping mutation is refused.
 
 ### 404, not 403
 
