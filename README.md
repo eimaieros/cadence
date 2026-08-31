@@ -228,11 +228,12 @@ npm run dev
 cd backend && pytest -q
 ```
 
-81 backend tests. They need `cadence_test` to exist; the schema is dropped and recreated
+92 backend tests. They need `cadence_test` to exist; the schema is dropped and recreated
 per test, so never point `DATABASE_URL` at anything you care about.
 
 ```
 tests/test_auth.py ..................... auth, token type confusion, hash leakage
+tests/test_config.py ................... production secrets and bounded settings
 tests/test_sessions.py ................. CRUD, cross-user isolation, SSE, cost, scoring
 tests/test_ratelimit_and_evals.py ...... window edges, eval harness structure
 ```
