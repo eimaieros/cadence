@@ -53,7 +53,7 @@ export default function LoginPage() {
       const tokens = registering
         ? await api.register(email, password, displayName)
         : await api.login(email, password);
-      auth.set(tokens.access_token);
+      auth.set(tokens);
       router.push("/sessions");
     } catch (err) {
       // Errors explain what happened and what to do. They never apologise and

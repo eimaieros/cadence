@@ -48,13 +48,20 @@ result they already paid to generate.
 no release since 2020 and raises against bcrypt ≥ 4.1. One fewer unmaintained
 dependency in the authentication path.
 
+**Refresh replay.** Refresh credentials rotate through server-side families.
+Each token is single-use; presenting a consumed token revokes its descendants,
+and logout revokes the family under the same database row lock. The database
+stores the random token identifier and lifecycle metadata, never the bearer
+token itself.
+
 ## Known gaps, stated plainly
 
 These are real and they are not fixed:
 
-- **No refresh token rotation or revocation.** Short access TTLs are the
-  mitigation. A stolen refresh token is valid until it expires; a server-side
-  logout would need a token store.
+- **Access tokens are not individually revoked.** Logout stops future refreshes
+  immediately, but an access token already issued remains valid until its
+  configured short TTL expires. Browser tokens live in session storage and are
+  therefore still inside the origin's XSS threat model.
 - **Rate limiting bounds one instance.** `app/ratelimit.py` is an in-process
   sliding window. Behind two replicas a caller gets twice the budget, and a
   restart clears every window. The expensive path is separately bounded by the

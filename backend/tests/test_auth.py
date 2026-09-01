@@ -135,11 +135,53 @@ async def test_refresh_rotates_tokens(client):
             "display_name": "Rot",
         },
     )
-    refreshed = await client.post(
-        "/auth/refresh", json={"refresh_token": resp.json()["refresh_token"]}
-    )
+    original = resp.json()["refresh_token"]
+    refreshed = await client.post("/auth/refresh", json={"refresh_token": original})
     assert refreshed.status_code == 200
     assert refreshed.json()["access_token"]
+    assert refreshed.json()["refresh_token"] != original
+
+    # Rotation consumes the predecessor. Accepting it again would make the
+    # endpoint issue new strings without reducing a stolen token's lifetime.
+    reused = await client.post("/auth/refresh", json={"refresh_token": original})
+    assert reused.status_code == 401
+
+
+async def test_refresh_replay_revokes_the_replacement(client):
+    registered = await client.post(
+        "/auth/register",
+        json={
+            "email": "replay@example.com",
+            "password": "a-long-enough-password",
+            "display_name": "Replay",
+        },
+    )
+    original = registered.json()["refresh_token"]
+    rotated = await client.post("/auth/refresh", json={"refresh_token": original})
+    replacement = rotated.json()["refresh_token"]
+
+    assert (await client.post("/auth/refresh", json={"refresh_token": original})).status_code == 401
+    # Seeing the predecessor again is evidence that one copy was stolen. The
+    # whole family is revoked, including the otherwise-valid descendant.
+    assert (
+        await client.post("/auth/refresh", json={"refresh_token": replacement})
+    ).status_code == 401
+
+
+async def test_logout_revokes_the_family_and_is_idempotent(client):
+    registered = await client.post(
+        "/auth/register",
+        json={
+            "email": "logout@example.com",
+            "password": "a-long-enough-password",
+            "display_name": "Logout",
+        },
+    )
+    refresh = registered.json()["refresh_token"]
+
+    assert (await client.post("/auth/logout", json={"refresh_token": refresh})).status_code == 204
+    assert (await client.post("/auth/refresh", json={"refresh_token": refresh})).status_code == 401
+    assert (await client.post("/auth/logout", json={"refresh_token": refresh})).status_code == 204
 
 
 async def test_garbage_token_rejected(client):

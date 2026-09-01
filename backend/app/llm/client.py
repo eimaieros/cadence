@@ -14,7 +14,7 @@ what a model happened to say that afternoon.
 
 Cost note: prices are hardcoded estimates for accounting only. They feed the
 recorded-spend guardrail, not an invoice or a hard reservation. Confirm current
-prices at https://docs.claude.com/en/docs/about-claude/pricing before relying on
+prices at https://platform.claude.com/docs/en/about-claude/pricing before relying on
 them.
 """
 
@@ -36,11 +36,15 @@ API_VERSION = "2023-06-01"
 
 # (input $/Mtok, output $/Mtok)
 PRICES: dict[str, tuple[float, float]] = {
+    "claude-sonnet-5": (2.0, 10.0),
     "claude-sonnet-4-6": (3.0, 15.0),
     "claude-haiku-4-5-20251001": (1.0, 5.0),
     "claude-opus-5": (5.0, 25.0),
 }
-_FALLBACK_PRICE = (3.0, 15.0)
+# An unknown model must not look cheaper than the models we know. This feeds a
+# spend guardrail, so overestimating an unrecognised ID is safer than quietly
+# letting a more expensive model consume past the configured threshold.
+_FALLBACK_PRICE = (5.0, 25.0)
 _RETRYABLE_STATUS = {429, 500, 502, 503, 529}
 
 

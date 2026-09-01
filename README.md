@@ -9,7 +9,7 @@ scorecard that cites the moments that earned each score.
 [![CI](https://github.com/eimaieros/cadence/actions/workflows/ci.yml/badge.svg)](https://github.com/eimaieros/cadence/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 ![Python 3.12](https://img.shields.io/badge/python-3.12-blue)
-![112 tests](https://img.shields.io/badge/tests-112-brightgreen)
+![120 tests](https://img.shields.io/badge/tests-120-brightgreen)
 
 Built with FastAPI, PostgreSQL, and Next.js. Runs with no API key.
 
@@ -37,6 +37,7 @@ the parts I actually built:
 | **A spend guardrail** | Recorded spend is checked before each new interview call. An in-flight call can cross the threshold and final scoring remains available, so this is deliberately not marketed as a hard reservation. |
 | **Prompt injection treated as real** | Candidate text is data, never instructions. It never touches the system prompt. |
 | **Tenancy enforced in one place** | Every session route resolves through one ownership dependency. There is no handler that can forget. |
+| **Refresh tokens that really rotate** | Every refresh consumes one server-side token row. Replay revokes its entire family; logout does the same. |
 | **Tests against real PostgreSQL** | The schema uses JSONB and native enums. A SQLite test suite would pass while production broke. |
 
 ---
@@ -72,8 +73,9 @@ the parts I actually built:
 
 ```
 users ──< interview_sessions ──< turns
-                    │
-                    └──── scorecards (1:1)
+  │                 │
+  │                 └──── scorecards (1:1)
+  └──── refresh_tokens (rotating families)
 ```
 
 `turns` alternate interviewer and candidate, ordered by a unique
@@ -161,6 +163,19 @@ passlib has had no release since 2020 and its bcrypt backend raises against
 bcrypt ≥ 4.1. One less unmaintained dependency in the authentication path is
 worth the handful of lines.
 
+### Rotation has to consume the old token
+
+Returning a different refresh-token string is not rotation if the predecessor
+still works. Cadence stores only each token's random `jti`, family, expiry and
+lifecycle timestamps — never the signed bearer token itself. `/auth/refresh`
+locks that row, marks it used and issues one descendant in the same family.
+
+If a used token appears again, the server treats it as replay and revokes every
+descendant in the family. `/auth/logout` takes the same row lock before revoking,
+so a simultaneous refresh cannot escape logout. In the browser, concurrent 401s
+share one refresh promise and retry once with the rotated access token rather
+than racing the family against itself.
+
 ### Retries only before the first byte
 
 The Anthropic provider retries with exponential backoff **and jitter** — without
@@ -168,6 +183,11 @@ jitter, every client that failed at the same moment retries at the same moment
 and knocks the recovering upstream over again. But it only retries if nothing
 has been emitted yet. Once tokens have reached the client, restarting would
 duplicate visible output, and a partial answer is better than a doubled one.
+
+The default interviewer is Claude Sonnet 5 and scoring stays on Haiku 4.5. The
+prices used for the local estimate are pinned in code and covered by tests;
+unknown model IDs use the most conservative known rate instead of silently
+undercounting the spend guardrail. Both model IDs remain environment overrides.
 
 ### Prompt injection
 
@@ -228,14 +248,18 @@ npm run dev
 cd backend && pytest -q
 ```
 
-92 backend tests. They need `cadence_test` to exist; the schema is dropped and recreated
+96 backend tests. They need `cadence_test` to exist; the schema is dropped and recreated
 per test, so never point `DATABASE_URL` at anything you care about.
+
+The frontend suite has 24 tests: 20 protocol edge cases for SSE and four for
+token-pair storage, automatic rotation, concurrent 401s and rejected replay.
 
 ```
 tests/test_auth.py ..................... auth, token type confusion, hash leakage
 tests/test_config.py ................... production secrets and bounded settings
 tests/test_sessions.py ................. CRUD, cross-user isolation, SSE, cost, scoring
 tests/test_ratelimit_and_evals.py ...... window edges, eval harness structure
+tests/test_pricing.py .................. current model rates, conservative fallback
 ```
 
 ---
@@ -246,7 +270,8 @@ tests/test_ratelimit_and_evals.py ...... window edges, eval harness structure
 |---|---|---|
 | `POST` | `/auth/register` | → token pair |
 | `POST` | `/auth/login` | → token pair |
-| `POST` | `/auth/refresh` | refresh → new pair |
+| `POST` | `/auth/refresh` | consume refresh token → rotated pair |
+| `POST` | `/auth/logout` | revoke the refresh-token family |
 | `GET` | `/auth/me` | current user |
 | `POST` | `/sessions` | start an interview |
 | `GET` | `/sessions` | list (paginated, caller-scoped) |
@@ -296,8 +321,11 @@ layout works down to mobile.
 
 Honest about what this is not:
 
-- **No refresh token rotation or revocation list.** Short access TTLs are the
-  mitigation. A logout that invalidates server-side would need a token store.
+- **Logout does not revoke access tokens already issued.** It revokes the
+  refresh-token family immediately, while the current access token can live for
+  at most the configured 30-minute TTL. The browser keeps both tokens in
+  session storage, so an origin-level script injection could read them; moving
+  refresh credentials to a same-site HttpOnly cookie is the next hardening step.
 - **Rate limiting is in-process.** `app/ratelimit.py` is a sliding window that
   bounds one instance. Behind two replicas a caller gets twice the budget, and a
   restart clears every window. That is a deliberate trade: the expensive path is

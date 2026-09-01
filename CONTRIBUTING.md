@@ -16,7 +16,7 @@ interviewer instead of calling a model — every code path is identical, includi
 the streaming, so you can work on the whole app offline and never spend a cent.
 
 ```bash
-cd backend && pytest -q          # 92 tests, needs a real PostgreSQL
+cd backend && pytest -q          # 96 tests, needs a real PostgreSQL
 python -m evals.run              # scorer evals, structural tier, no key needed
 cd frontend && npx tsc --noEmit  # types
 ```
@@ -70,7 +70,7 @@ out-score the vague one on Specificity" survives a model upgrade.
 
 ## Security-sensitive areas
 
-Two places where a well-meaning change can quietly open a hole:
+Three places where a well-meaning change can quietly open a hole:
 
 - **Ownership.** Every session route resolves through one dependency. If you
   add a handler, route it through that dependency rather than checking inline —
@@ -79,6 +79,10 @@ Two places where a well-meaning change can quietly open a hole:
   in a delimiter, never in the system prompt, and speaker labels come from an
   enum so nobody can forge an `Interviewer:` line inside their own answer. If
   you find yourself concatenating user text into an instruction, stop.
+- **Refresh rotation.** A refresh must consume its predecessor under a row lock.
+  Reuse revokes the whole family, and that revocation must commit even though
+  the route returns 401. Removing either detail turns replay detection into a
+  comment rather than a control.
 
 ## Conduct
 
