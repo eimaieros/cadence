@@ -82,9 +82,13 @@ export default function SessionsPage() {
         <div className="flex items-center gap-5">
           {name && <span className="label">{name}</span>}
           <button
-            onClick={() => {
-              auth.clear();
-              router.push("/");
+            onClick={async () => {
+              try {
+                await api.logout();
+              } finally {
+                auth.clear();
+                router.push("/");
+              }
             }}
             className="label transition-colors hover:text-[color:var(--color-ink)]"
           >

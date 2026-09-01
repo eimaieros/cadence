@@ -45,7 +45,7 @@ class Settings(BaseSettings):
     # No key -> the app transparently falls back to a scripted provider so the
     # whole product is demoable (and testable) with zero credentials.
     anthropic_api_key: str | None = None
-    llm_model_interviewer: str = "claude-sonnet-4-6"
+    llm_model_interviewer: str = "claude-sonnet-5"
     llm_model_scorer: str = "claude-haiku-4-5-20251001"
     llm_max_tokens: int = Field(default=1024, ge=1, le=65_536)
 

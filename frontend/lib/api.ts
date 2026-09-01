@@ -10,10 +10,12 @@ import {
   TokenPairSchema,
   UserSchema,
   type Seniority,
+  type TokenPair,
 } from "./schemas";
 
 const BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
-const TOKEN_KEY = "cadence.access";
+const ACCESS_KEY = "cadence.access";
+const REFRESH_KEY = "cadence.refresh";
 
 export class ApiError extends Error {
   constructor(
@@ -28,31 +30,103 @@ export class ApiError extends Error {
 /* Tokens live in memory first and sessionStorage second, so a token does not
    outlive the browser session. localStorage would persist it indefinitely for
    any script on the origin to read. */
-let memoryToken: string | null = null;
+let memoryAccess: string | null = null;
+let memoryRefresh: string | null = null;
 
 export const auth = {
-  set(token: string) {
-    memoryToken = token;
-    if (typeof window !== "undefined") sessionStorage.setItem(TOKEN_KEY, token);
+  set(tokens: TokenPair) {
+    memoryAccess = tokens.access_token;
+    memoryRefresh = tokens.refresh_token;
+    if (typeof window !== "undefined") {
+      sessionStorage.setItem(ACCESS_KEY, tokens.access_token);
+      sessionStorage.setItem(REFRESH_KEY, tokens.refresh_token);
+    }
   },
   get(): string | null {
-    if (memoryToken) return memoryToken;
+    if (memoryAccess) return memoryAccess;
     if (typeof window === "undefined") return null;
-    memoryToken = sessionStorage.getItem(TOKEN_KEY);
-    return memoryToken;
+    memoryAccess = sessionStorage.getItem(ACCESS_KEY);
+    return memoryAccess;
+  },
+  getRefresh(): string | null {
+    if (memoryRefresh) return memoryRefresh;
+    if (typeof window === "undefined") return null;
+    memoryRefresh = sessionStorage.getItem(REFRESH_KEY);
+    return memoryRefresh;
   },
   clear() {
-    memoryToken = null;
-    if (typeof window !== "undefined") sessionStorage.removeItem(TOKEN_KEY);
+    memoryAccess = null;
+    memoryRefresh = null;
+    if (typeof window !== "undefined") {
+      sessionStorage.removeItem(ACCESS_KEY);
+      sessionStorage.removeItem(REFRESH_KEY);
+    }
   },
 };
 
-function headers(json = true): HeadersInit {
-  const h: Record<string, string> = {};
-  if (json) h["Content-Type"] = "application/json";
+function headers(json = true, existing?: HeadersInit): Headers {
+  const h = new Headers(existing);
+  if (json && !h.has("Content-Type")) h.set("Content-Type", "application/json");
   const token = auth.get();
-  if (token) h["Authorization"] = `Bearer ${token}`;
+  if (token) h.set("Authorization", `Bearer ${token}`);
   return h;
+}
+
+let refreshInFlight: Promise<boolean> | null = null;
+
+async function refreshSession(): Promise<boolean> {
+  if (refreshInFlight) return refreshInFlight;
+  const refresh = auth.getRefresh();
+  if (!refresh) return false;
+
+  refreshInFlight = (async () => {
+    try {
+      const res = await fetch(`${BASE}/auth/refresh`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ refresh_token: refresh }),
+      });
+      if (!res.ok) {
+        auth.clear();
+        return false;
+      }
+      auth.set(TokenPairSchema.parse(await res.json()));
+      return true;
+    } catch {
+      auth.clear();
+      return false;
+    }
+  })().finally(() => {
+    refreshInFlight = null;
+  });
+  return refreshInFlight;
+}
+
+async function fetchWithAuth(
+  path: string,
+  init: RequestInit = {},
+  json = true,
+): Promise<Response> {
+  const accessUsed = auth.get();
+  const send = () =>
+    fetch(`${BASE}${path}`, { ...init, headers: headers(json, init.headers) });
+  let res = await send();
+
+  const sessionEndpoint = !new Set([
+    "/auth/register",
+    "/auth/login",
+    "/auth/refresh",
+    "/auth/logout",
+  ]).has(path);
+  if (res.status === 401 && sessionEndpoint) {
+    // Another request may already have rotated the pair while this one was in
+    // flight. Retry with that access token before attempting another rotation.
+    const accessNow = auth.get();
+    const recovered =
+      accessNow !== null && accessNow !== accessUsed ? true : await refreshSession();
+    if (recovered) res = await send();
+  }
+  return res;
 }
 
 async function request<T extends z.ZodTypeAny>(
@@ -60,7 +134,7 @@ async function request<T extends z.ZodTypeAny>(
   schema: T,
   init?: RequestInit,
 ): Promise<z.infer<T>> {
-  const res = await fetch(`${BASE}${path}`, { ...init, headers: headers() });
+  const res = await fetchWithAuth(path, init);
 
   if (!res.ok) {
     let detail = res.statusText;
@@ -91,6 +165,16 @@ export const api = {
       body: JSON.stringify({ email, password }),
     }),
 
+  logout: async () => {
+    const refresh = auth.getRefresh();
+    if (!refresh) return;
+    await fetch(`${BASE}/auth/logout`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ refresh_token: refresh }),
+    });
+  },
+
   me: () => request("/auth/me", UserSchema),
 
   listSessions: () => request("/sessions", SessionSummarySchema.array()),
@@ -104,7 +188,7 @@ export const api = {
     }),
 
   deleteSession: async (id: string) => {
-    const res = await fetch(`${BASE}/sessions/${id}`, { method: "DELETE", headers: headers() });
+    const res = await fetchWithAuth(`/sessions/${id}`, { method: "DELETE" });
     if (!res.ok) throw new ApiError("Could not delete that session", res.status);
   },
 
@@ -146,10 +230,11 @@ export async function streamQuestion(
   handlers: StreamHandlers,
   signal?: AbortSignal,
 ): Promise<void> {
-  const res = await fetch(`${BASE}/sessions/${sessionId}/stream`, {
-    headers: headers(false),
-    signal,
-  });
+  const res = await fetchWithAuth(
+    `/sessions/${sessionId}/stream`,
+    { signal },
+    false,
+  );
 
   if (!res.ok || !res.body) {
     let detail = "The interviewer is unavailable right now.";

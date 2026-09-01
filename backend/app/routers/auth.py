@@ -2,21 +2,24 @@
 
 from __future__ import annotations
 
+import uuid
+from datetime import UTC, datetime
+
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError
 
 from app.config import settings
 from app.deps import CurrentUser, DbSession
-from app.models import User
+from app.models import RefreshToken, User
 from app.ratelimit import login_limit, register_limit
 from app.schemas import RefreshRequest, TokenPair, UserCreate, UserLogin, UserOut
 from app.security import (
     TokenError,
     create_access_token,
-    create_refresh_token,
-    decode_token,
+    decode_token_claims,
     hash_password,
+    issue_refresh_token,
     verify_password,
 )
 
@@ -27,10 +30,19 @@ router = APIRouter(prefix="/auth", tags=["auth"])
 DUMMY_PASSWORD_HASH = hash_password("not-a-real-password")
 
 
-def _tokens_for(user: User) -> TokenPair:
+def _tokens_for(user: User, db: DbSession, family_id: uuid.UUID | None = None) -> TokenPair:
+    issued = issue_refresh_token(user.id)
+    db.add(
+        RefreshToken(
+            token_id=issued.jti,
+            user_id=user.id,
+            family_id=family_id or uuid.uuid4(),
+            expires_at=issued.expires_at,
+        )
+    )
     return TokenPair(
         access_token=create_access_token(user.id),
-        refresh_token=create_refresh_token(user.id),
+        refresh_token=issued.value,
         expires_in=settings.access_token_ttl_minutes * 60,
     )
 
@@ -58,7 +70,7 @@ async def register(payload: UserCreate, db: DbSession) -> TokenPair:
             status_code=status.HTTP_409_CONFLICT,
             detail="Could not create that account",
         ) from None
-    return _tokens_for(user)
+    return _tokens_for(user, db)
 
 
 @router.post("/login", response_model=TokenPair, dependencies=[Depends(login_limit)])
@@ -78,24 +90,85 @@ async def login(payload: UserLogin, db: DbSession) -> TokenPair:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED, detail="Incorrect email or password"
         )
-    return _tokens_for(user)
+    return _tokens_for(user, db)
 
 
 @router.post("/refresh", response_model=TokenPair)
 async def refresh(payload: RefreshRequest, db: DbSession) -> TokenPair:
     try:
-        user_id = decode_token(payload.refresh_token, expected_type="refresh")
+        claims = decode_token_claims(payload.refresh_token, expected_type="refresh")
     except TokenError:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid refresh token"
         ) from None
 
-    user = await db.get(User, user_id)
+    result = await db.execute(
+        select(RefreshToken)
+        .where(
+            RefreshToken.token_id == claims.jti,
+            RefreshToken.user_id == claims.subject,
+        )
+        .with_for_update()
+    )
+    current = result.scalar_one_or_none()
+    if current is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid refresh token"
+        )
+
+    now = datetime.now(UTC)
+    if current.used_at is not None or current.revoked_at is not None:
+        # A consumed token appearing again indicates replay. Commit the family
+        # revocation before raising: the request dependency rolls back on an
+        # exception, which would otherwise undo the security response.
+        await db.execute(
+            update(RefreshToken)
+            .where(
+                RefreshToken.family_id == current.family_id,
+                RefreshToken.revoked_at.is_(None),
+            )
+            .values(revoked_at=now)
+        )
+        await db.commit()
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid refresh token"
+        )
+
+    user = await db.get(User, claims.subject)
     if user is None:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid refresh token"
         )
-    return _tokens_for(user)
+    current.used_at = now
+    return _tokens_for(user, db, current.family_id)
+
+
+@router.post("/logout", status_code=status.HTTP_204_NO_CONTENT)
+async def logout(payload: RefreshRequest, db: DbSession) -> None:
+    """Revoke a refresh-token family; deliberately idempotent and opaque."""
+    try:
+        claims = decode_token_claims(payload.refresh_token, expected_type="refresh")
+    except TokenError:
+        return
+
+    result = await db.execute(
+        select(RefreshToken)
+        .where(
+            RefreshToken.token_id == claims.jti,
+            RefreshToken.user_id == claims.subject,
+        )
+        .with_for_update()
+    )
+    current = result.scalar_one_or_none()
+    if current is not None:
+        await db.execute(
+            update(RefreshToken)
+            .where(
+                RefreshToken.family_id == current.family_id,
+                RefreshToken.revoked_at.is_(None),
+            )
+            .values(revoked_at=datetime.now(UTC))
+        )
 
 
 @router.get("/me", response_model=UserOut)

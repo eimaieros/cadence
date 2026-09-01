@@ -69,6 +69,34 @@ class User(Base):
     )
 
 
+class RefreshToken(Base):
+    """One rotating refresh credential.
+
+    Only the random JWT identifier is stored, never the signed bearer token.
+    Every login starts a family; each refresh consumes one row and creates its
+    successor in the same family. Reuse revokes the entire family.
+    """
+
+    __tablename__ = "refresh_tokens"
+
+    token_id: Mapped[uuid.UUID] = mapped_column(PGUUID(as_uuid=True), primary_key=True)
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        PGUUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
+    family_id: Mapped[uuid.UUID] = mapped_column(PGUUID(as_uuid=True), nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+    __table_args__ = (
+        Index("ix_refresh_tokens_user", "user_id"),
+        Index("ix_refresh_tokens_family", "family_id"),
+    )
+
+
 class InterviewSession(Base):
     __tablename__ = "interview_sessions"
 

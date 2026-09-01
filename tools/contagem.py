@@ -7,7 +7,8 @@ This repository states a test count in three places and they mean three
 different things:
 
     README.md      badge                  backend + frontend
-    README.md      "the SSE parser has N" frontend only
+    README.md      "the frontend suite has N" frontend only
+    README.md      "the SSE parser has N" that source file only
     CONTRIBUTING   next to `pytest -q`    backend only
 
 Nothing was re-measuring any of them, and they drifted apart exactly as you
@@ -56,11 +57,15 @@ def main() -> int:
 
     total = a.backend + a.frontend
 
+    sse_source = (RAIZ / "frontend/lib/sse.test.ts").read_text(encoding="utf-8")
+    sse_tests = len(re.findall(r"\bit\s*\(", sse_source))
+
     # (ficheiro, padrao com um grupo, valor esperado, o que a frase quer dizer)
     alegacoes = [
         ("README.md", re.compile(r"badge/tests-(\d+)-"), total, "cracha: total"),
         ("README.md", re.compile(r"!\[(\d+) tests\]"), total, "texto do cracha: total"),
-        ("README.md", re.compile(r"SSE parser has (\d+) tests"), a.frontend, "so o frontend"),
+        ("README.md", re.compile(r"frontend suite has (\d+) tests"), a.frontend, "so o frontend"),
+        ("README.md", re.compile(r"SSE parser has (\d+) tests"), sse_tests, "ficheiro SSE"),
         ("CONTRIBUTING.md", re.compile(r"(\d+) tests, needs a real PostgreSQL"), a.backend, "so o backend"),
     ]
 
