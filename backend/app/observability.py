@@ -118,43 +118,52 @@ class RequestIdMiddleware(BaseHTTPMiddleware):
         # NTP correction and produce a negative duration, which then poisons any
         # average built on top of it.
         started = time.perf_counter()
+        # The reset has to come after the access line, not before it. It used
+        # to sit in a `finally` around `call_next` alone, which put the id back
+        # to "-" one statement before the one log line per request that exists
+        # to carry it: every access line read `"request_id": "-"` while the
+        # response header held the right id. Nothing compared the two — the
+        # formatter test sets the variable by hand — so it took a client
+        # sending its own X-Request-ID (cadence-mcp) and then looking for it in
+        # these logs to find out.
         try:
-            response = await call_next(request)
-        except Exception:
+            try:
+                response = await call_next(request)
+            except Exception:
+                duration = (time.perf_counter() - started) * 1000
+                self.log.exception(
+                    "unhandled",
+                    extra={
+                        "method": request.method,
+                        "path": request.url.path,
+                        "status": 500,
+                        "duration_ms": round(duration, 1),
+                    },
+                )
+                raise
+
             duration = (time.perf_counter() - started) * 1000
-            self.log.exception(
-                "unhandled",
+            response.headers[HEADER] = rid
+
+            # Health probes run every few seconds forever. Logging them at INFO
+            # buries everything else and costs money in any hosted log product.
+            level = logging.DEBUG if request.url.path in ("/health", "/ready") else logging.INFO
+            self.log.log(
+                level,
+                "%s %s -> %s",
+                request.method,
+                request.url.path,
+                response.status_code,
                 extra={
                     "method": request.method,
                     "path": request.url.path,
-                    "status": 500,
+                    "status": response.status_code,
                     "duration_ms": round(duration, 1),
                 },
             )
-            raise
+            return response
         finally:
             request_id_var.reset(token)
-
-        duration = (time.perf_counter() - started) * 1000
-        response.headers[HEADER] = rid
-
-        # Health probes run every few seconds forever. Logging them at INFO
-        # buries everything else and costs money in any hosted log product.
-        level = logging.DEBUG if request.url.path in ("/health", "/ready") else logging.INFO
-        self.log.log(
-            level,
-            "%s %s -> %s",
-            request.method,
-            request.url.path,
-            response.status_code,
-            extra={
-                "method": request.method,
-                "path": request.url.path,
-                "status": response.status_code,
-                "duration_ms": round(duration, 1),
-            },
-        )
-        return response
 
 
 def configure_logging(*, debug: bool) -> None:

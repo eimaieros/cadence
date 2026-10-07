@@ -91,9 +91,22 @@ async def test_two_requests_get_two_ids(client):
 
 
 @pytest.mark.asyncio
-async def test_a_caller_supplied_id_is_reused(client):
-    r = await client.get("/health", headers={HEADER: "trace-abc-123"})
+async def test_a_caller_supplied_id_is_reused(client, caplog):
+    """In the response header, and in the access log line for that request.
+
+    The second half is the one that matters: a caller sends its own id so it
+    can find the request in *our* logs. For a while the header was right and
+    every access line said "-", because the id was reset one statement before
+    the line was written.
+    """
+    caplog.handler.addFilter(RequestIdFilter())
+    with caplog.at_level(logging.DEBUG, logger="cadence.access"):
+        r = await client.get("/health", headers={HEADER: "trace-abc-123"})
+
     assert r.headers[HEADER] == "trace-abc-123"
+    linhas = [rec for rec in caplog.records if rec.name == "cadence.access"]
+    assert linhas, "the request should have produced an access log line"
+    assert [rec.request_id for rec in linhas] == ["trace-abc-123"]
 
 
 @pytest.mark.asyncio
