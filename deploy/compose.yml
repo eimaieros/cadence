@@ -1,0 +1,79 @@
+# Production: the same three services as the root docker-compose.yml, plus the
+# Caddy origin in front of them. Images are built in CI and pulled from ECR by
+# git SHA; release.sh writes the values below into an env file only root can
+# read, and none of them is ever in this repository.
+name: cadence
+
+x-logging: &logging
+  driver: awslogs
+  options:
+    awslogs-region: ${AWS_REGION:?}
+    awslogs-group: ${LOG_GROUP:?}
+    awslogs-create-group: "false"
+    tag: "{{.Name}}"
+
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: cadence
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?}
+      POSTGRES_DB: cadence
+    volumes:
+      - /srv/cadence/pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U cadence -d cadence"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    logging: *logging
+
+  api:
+    image: ${API_IMAGE:?}:${TAG:?}
+    restart: unless-stopped
+    environment:
+      ENVIRONMENT: production
+      DATABASE_URL: postgresql+asyncpg://cadence:${POSTGRES_PASSWORD}@db:5432/cadence
+      DB_POOL_SIZE: "5"
+      JWT_SECRET: ${JWT_SECRET:?}
+      # Empty runs the scripted interviewer, which costs nothing per session.
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      CORS_ORIGINS: ${PUBLIC_URL:?}
+      # Believed only because port 80 is reachable from CloudFront alone and
+      # Caddy refuses requests without this distribution's secret header.
+      CLIENT_IP_HEADER: cloudfront-viewer-address
+    depends_on:
+      db:
+        condition: service_healthy
+    logging: *logging
+
+  web:
+    image: ${WEB_IMAGE:?}:${TAG:?}
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/').then(r => process.exit(r.ok ? 0 : 1), () => process.exit(1))"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    depends_on:
+      api:
+        condition: service_healthy
+    logging: *logging
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+    environment:
+      ORIGIN_SECRET: ${ORIGIN_SECRET:?}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+    depends_on:
+      api:
+        condition: service_healthy
+      web:
+        condition: service_healthy
+    logging: *logging

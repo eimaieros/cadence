@@ -1,0 +1,41 @@
+# The origin behind CloudFront. TLS ends at the edge; this only ever speaks
+# plain HTTP on port 80, and the security group only lets CloudFront reach it.
+#
+# The security group alone is not enough: every CloudFront distribution, anyone
+# else's included, connects from those same addresses. ORIGIN_SECRET is a value
+# only this stack's distribution adds to its requests, so a request without it
+# came through someone else's CloudFront and is refused.
+{
+	admin off
+	auto_https off
+}
+
+:80 {
+	@ours header X-Origin-Verify {$ORIGIN_SECRET}
+
+	handle @ours {
+		request_header -X-Origin-Verify
+
+		# The API is mounted under /api so the page and the API share one origin:
+		# no CORS, and the frontend image does not need to know its domain.
+		handle_path /api/* {
+			# Server-sent events: write each event as it arrives, never buffer.
+			reverse_proxy api:8000 {
+				flush_interval -1
+			}
+		}
+
+		handle {
+			reverse_proxy web:3000
+		}
+	}
+
+	handle {
+		respond "Forbidden" 403
+	}
+
+	log {
+		output stdout
+		format json
+	}
+}
