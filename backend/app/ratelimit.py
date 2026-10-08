@@ -18,10 +18,13 @@ its own kind of bug.
 
 from __future__ import annotations
 
+import ipaddress
 import time
 from collections import defaultdict, deque
 
 from fastapi import HTTPException, Request, status
+
+from app.config import settings
 
 
 class SlidingWindowLimiter:
@@ -73,18 +76,51 @@ class SlidingWindowLimiter:
         self._checks = 0
 
 
+def viewer_address(value: str) -> str | None:
+    """The address in an edge's "address:port" header, or None if it is not one.
+
+    CloudFront writes `CloudFront-Viewer-Address` as `203.0.113.7:46532`, and an
+    IPv6 viewer as the bare address followed by the port, without brackets. The
+    port is always there, so the last colon is always the separator -- trying
+    the whole value as an address first would read `2001:db8::1:8080` as one
+    IPv6 address and key every connection of that viewer separately.
+
+    IPv6 viewers are keyed on their /64. A single subscriber is routinely given
+    a whole /64, and a limit per address would hand them 2**64 budgets.
+    """
+    host, sep, port = value.strip().rpartition(":")
+    if not sep or not port.isdigit():
+        return None
+    try:
+        address = ipaddress.ip_address(host.strip("[]"))
+    except ValueError:
+        return None
+    if address.version == 6:
+        return str(ipaddress.ip_network(f"{address}/64", strict=False))
+    return str(address)
+
+
 def client_key(request: Request) -> str:
     """Identify the caller.
 
     Authenticated requests key on the token, so a limit follows the account
-    rather than the network. Anonymous ones fall back to the peer address --
-    which is coarse behind a proxy, and would need a trusted `X-Forwarded-For`
-    parse in a real deployment. Trusting that header without a trusted proxy in
-    front is how a limiter becomes decorative, so it is not trusted here.
+    rather than the network. Anonymous ones key on an address: the one a
+    trusted edge wrote into `client_ip_header`, when that is configured and
+    parses, and the TCP peer otherwise.
+
+    The peer alone is coarse behind a proxy -- it is the proxy -- and trusting
+    a client-writable `X-Forwarded-For` instead is how a limiter becomes
+    decorative. The edge header is trusted only because the deployment makes
+    the edge the only way in (see infra/).
     """
     header = request.headers.get("authorization")
     if header and header.lower().startswith("bearer "):
         return f"token:{hash(header[7:])}"
+    name = settings.client_ip_header
+    if name:
+        viewer = viewer_address(request.headers.get(name, ""))
+        if viewer is not None:
+            return f"ip:{viewer}"
     return f"ip:{request.client.host if request.client else 'unknown'}"
 
 

@@ -9,7 +9,7 @@ scorecard that cites the moments that earned each score.
 [![CI](https://github.com/eimaieros/cadence/actions/workflows/ci.yml/badge.svg)](https://github.com/eimaieros/cadence/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 ![Python 3.12](https://img.shields.io/badge/python-3.12-blue)
-![157 tests](https://img.shields.io/badge/tests-157-brightgreen)
+![172 tests](https://img.shields.io/badge/tests-172-brightgreen)
 
 Built with FastAPI, PostgreSQL, and Next.js. Runs with no API key.
 
@@ -276,7 +276,7 @@ npm run dev
 cd backend && pytest -q
 ```
 
-112 backend tests. They need `cadence_test` to exist; the schema is dropped and recreated
+127 backend tests. They need `cadence_test` to exist; the schema is dropped and recreated
 per test, so never point `DATABASE_URL` at anything you care about.
 
 The frontend suite has 45 tests: 20 protocol edge cases for SSE, four for
@@ -374,7 +374,11 @@ Honest about what this is not:
   it is not a reservation. This limiter covers the cheaper abuse — signup
   spam, login brute force, opening sessions in a loop. Moving to Redis is a swap
   of one dict for a sorted set; the reason not to yet is that it adds a service
-  to the compose file for a product with one instance.
+  to the compose file for a product with one instance. Anonymous limits key on
+  an address, and behind a proxy the TCP peer is the proxy, so deployed they
+  key on the viewer address CloudFront writes (`CLIENT_IP_HEADER`). That header
+  is believed only because the origin accepts nothing that did not come through
+  CloudFront; anywhere else it stays unset.
 - **The eval harness only runs its structural tier in CI.** `evals/` asserts on
   relationships rather than absolute numbers — the answer carrying figures must
   out-score the vague one on Specificity — because `overall == 72` is not a test,
