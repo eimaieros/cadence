@@ -208,6 +208,9 @@ export class CadenceStack extends Stack {
       // the containers it runs cannot.
       httpTokens: ec2.HttpTokens.REQUIRED,
       httpPutResponseHopLimit: 1,
+      // Standard credits: if the CPU runs hot for long, the instance slows down
+      // instead of billing surplus credits, which the free trial does not cover.
+      creditSpecification: ec2.CpuCredits.STANDARD,
       blockDevices: [
         {
           deviceName: "/dev/xvda",

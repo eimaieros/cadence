@@ -63,6 +63,9 @@ What the bigger shape buys, and when it would be worth it:
   this repository's `production` environment and nothing else, for an hour.
 - **IMDSv2 with a hop limit of 1.** The host can read its credentials; the
   containers it runs cannot.
+- **No surprise compute bill.** The instance runs with standard CPU credits: if
+  it ran hot for long it would slow down rather than bill surplus credits,
+  which the free trial does not cover.
 - **Data survives the host.** PostgreSQL lives on its own encrypted EBS volume,
   snapshotted every day and kept for seven. Deleting the stack leaves a final
   snapshot behind.
