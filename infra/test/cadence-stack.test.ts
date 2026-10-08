@@ -72,6 +72,12 @@ describe("the host", () => {
     });
   });
 
+  it("throttles rather than bills when it runs out of CPU credits", () => {
+    template.hasResourceProperties("AWS::EC2::Instance", {
+      CreditSpecification: { CPUCredits: "standard" },
+    });
+  });
+
   it("encrypts every volume", () => {
     template.hasResourceProperties("AWS::EC2::Instance", {
       BlockDeviceMappings: [Match.objectLike({ Ebs: Match.objectLike({ Encrypted: true }) })],
