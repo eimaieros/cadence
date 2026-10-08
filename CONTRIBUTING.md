@@ -16,7 +16,7 @@ interviewer instead of calling a model — every code path is identical, includi
 the streaming, so you can work on the whole app offline and never spend a cent.
 
 ```bash
-cd backend && pytest -q          # 112 tests, needs a real PostgreSQL
+cd backend && pytest -q          # 127 tests, needs a real PostgreSQL
 python -m evals.run              # scorer evals, structural tier, no key needed
 cd frontend && npx tsc --noEmit  # types
 cd frontend && npm test          # Vitest; component tests run in jsdom

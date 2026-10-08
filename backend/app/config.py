@@ -8,6 +8,7 @@ be a deploy-time failure, not a 3am pager.
 
 from __future__ import annotations
 
+import re
 from functools import lru_cache
 from typing import Annotated, Literal
 
@@ -54,6 +55,15 @@ class Settings(BaseSettings):
     # named/configured as a guardrail rather than claimed as a reservation.
     session_cost_ceiling_usd: float = Field(default=0.50, gt=0, allow_inf_nan=False)
 
+    # --- Edge -------------------------------------------------------------
+    # The header a trusted edge writes the viewer's address into, as
+    # "address:port" -- CloudFront's `CloudFront-Viewer-Address` is the one this
+    # is built for. Unset, anonymous rate limits key on the TCP peer, which
+    # behind a reverse proxy is the proxy: every anonymous caller would share
+    # one budget. Set it only where the app cannot be reached except through
+    # that edge, because a header a client can write is not an address.
+    client_ip_header: str | None = None
+
     # --- CORS -------------------------------------------------------------
     # NoDecode stops pydantic-settings from trying to JSON-parse this before the
     # validator below runs -- otherwise a plain comma-separated env var, which is
@@ -68,6 +78,18 @@ class Settings(BaseSettings):
         if isinstance(v, str):
             return [o.strip() for o in v.split(",") if o.strip()]
         return v
+
+    @field_validator("client_ip_header")
+    @classmethod
+    def _header_name(cls, v: str | None) -> str | None:
+        if v is None or not v.strip():
+            return None
+        name = v.strip().lower()
+        # RFC 9110 token characters, minus the ones nobody uses in a name. A
+        # typo with a space in it would otherwise match no header, silently.
+        if not re.fullmatch(r"[a-z0-9][a-z0-9-]*", name):
+            raise ValueError(f"client_ip_header is not a header name: {v!r}")
+        return name
 
     @field_validator("jwt_secret")
     @classmethod

@@ -65,7 +65,10 @@ These are real and they are not fixed:
 - **Rate limiting bounds one instance.** `app/ratelimit.py` is an in-process
   sliding window. Behind two replicas a caller gets twice the budget, and a
   restart clears every window. The expensive path is separately bounded by the
-  recorded-spend guardrail, which lives in the database.
+  recorded-spend guardrail, which lives in the database. Anonymous callers are
+  keyed on the TCP peer unless `CLIENT_IP_HEADER` names a header a trusted edge
+  writes; setting it where clients can reach the app directly would let any
+  caller choose their own key.
 - **No account lockout or CAPTCHA.** The rate limiter slows credential stuffing;
   it does not stop a patient attacker.
 - **Secrets come from the environment.** `.env.example` ships defaults that are
