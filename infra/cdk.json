@@ -1,0 +1,10 @@
+{
+  "app": "npx tsx bin/cadence.ts",
+  "watch": { "include": ["bin/**", "lib/**", "../deploy/**"] },
+  "context": {
+    "githubRepo": "eimaieros/cadence",
+    "@aws-cdk/aws-ec2:restrictDefaultSecurityGroup": true,
+    "@aws-cdk/aws-iam:minimizePolicies": true,
+    "@aws-cdk/core:checkSecretUsage": true
+  }
+}

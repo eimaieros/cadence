@@ -37,3 +37,15 @@ updates:
       frontend:
         patterns: ["*"]
         update-types: ["minor", "patch"]
+
+  # aws-cdk-lib sai quase todas as semanas. Agrupado, para ser uma pull request
+  # por semana e não uma por pacote; o job infra do CI sintetiza e testa a
+  # stack em cada uma.
+  - package-ecosystem: npm
+    directory: /infra
+    schedule: { interval: weekly }
+    commit-message: { prefix: "deps" }
+    groups:
+      infra:
+        patterns: ["*"]
+        update-types: ["minor", "patch"]

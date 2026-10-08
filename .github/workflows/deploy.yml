@@ -1,0 +1,154 @@
+name: Deploy
+
+# Ships main to AWS once CI has passed on it (infra/ has the stack).
+#
+# No AWS key is stored anywhere. Each job asks GitHub for an OIDC token and
+# trades it for a one-hour session on a role that trusts this repository's
+# production environment and nothing else. Until the repository variable
+# AWS_DEPLOY_ROLE_ARN exists, every job here is skipped, so forks and a
+# repository without a deployment stay green.
+
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+# One release at a time, and a newer one waits instead of cancelling a release
+# that is halfway through.
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
+env:
+  AWS_REGION: eu-north-1
+  # workflow_run fires from the default branch; the commit to ship is the one CI tested.
+  SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
+
+jobs:
+  images:
+    name: Image (${{ matrix.service }})
+    # A pull request from a fork can have a branch called main. Only a push to
+    # this repository's main that passed CI is shipped.
+    if: >-
+      vars.AWS_DEPLOY_ROLE_ARN != '' && (
+        github.event_name == 'workflow_dispatch' || (
+          github.event.workflow_run.conclusion == 'success' &&
+          github.event.workflow_run.event == 'push'
+        )
+      )
+    # Graviton in production, so the images are built on arm64 natively rather
+    # than under emulation.
+    runs-on: ubuntu-24.04-arm
+    environment: production
+    strategy:
+      matrix:
+        include:
+          - service: api
+            context: backend
+          - service: web
+            context: frontend
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ env.SHA }}
+          persist-credentials: false
+
+      - uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build and push
+        env:
+          SERVICE: ${{ matrix.service }}
+          CONTEXT: ${{ matrix.context }}
+        run: |
+          repository="$(aws ssm get-parameter --name /cadence/deploy \
+            --query Parameter.Value --output text | jq -er ".${SERVICE}Repository")"
+          image="${repository}:${SHA}"
+          # Tags are immutable in ECR: a rerun finds the image already there.
+          if docker manifest inspect "$image" > /dev/null 2>&1; then
+            echo "${image} is already pushed"
+            exit 0
+          fi
+          # The API base is inlined into the client bundle at build time.
+          docker build --build-arg NEXT_PUBLIC_API_URL=/api --tag "$image" "$CONTEXT"
+          docker push "$image"
+
+  release:
+    name: Release
+    needs: images
+    runs-on: ubuntu-latest
+    environment:
+      name: production
+      url: ${{ steps.release.outputs.url }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ env.SHA }}
+          persist-credentials: false
+
+      - uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      # The host has no inbound SSH. The release goes in as an SSM command: the
+      # three files from deploy/ and the call to release.sh with this commit.
+      - name: Release on the host
+        id: release
+        run: |
+          config="$(aws ssm get-parameter --name /cadence/deploy --query Parameter.Value --output text)"
+          instance="$(jq -er .instanceId <<< "$config")"
+          echo "url=$(jq -er .publicUrl <<< "$config")" >> "$GITHUB_OUTPUT"
+
+          jq -n \
+            --arg compose "$(base64 -w0 deploy/compose.yml)" \
+            --arg caddy "$(base64 -w0 deploy/Caddyfile)" \
+            --arg release "$(base64 -w0 deploy/release.sh)" \
+            --arg sha "$SHA" \
+            '{commands: [
+              "set -euo pipefail",
+              "mkdir -p /opt/cadence",
+              "echo \($compose) | base64 -d > /opt/cadence/compose.yml",
+              "echo \($caddy) | base64 -d > /opt/cadence/Caddyfile",
+              "echo \($release) | base64 -d > /opt/cadence/release.sh",
+              "bash /opt/cadence/release.sh \($sha)"
+            ]}' > commands.json
+
+          command_id="$(aws ssm send-command \
+            --instance-ids "$instance" \
+            --document-name AWS-RunShellScript \
+            --comment "cadence ${SHA:0:12}" \
+            --parameters file://commands.json \
+            --query Command.CommandId --output text)"
+
+          status=Pending
+          for _ in $(seq 1 120); do
+            status="$(aws ssm get-command-invocation --command-id "$command_id" \
+              --instance-id "$instance" --query Status --output text 2> /dev/null || echo Pending)"
+            case "$status" in
+              Pending|InProgress|Delayed) sleep 5 ;;
+              *) break ;;
+            esac
+          done
+
+          aws ssm get-command-invocation --command-id "$command_id" --instance-id "$instance" \
+            --query '[StandardOutputContent, StandardErrorContent]' --output text
+          echo "SSM status: ${status}"
+          test "$status" = Success
+
+      # Through CloudFront, the way a visitor gets there: /api/ready answers
+      # only when the API can reach PostgreSQL.
+      - name: Smoke test
+        env:
+          URL: ${{ steps.release.outputs.url }}
+        run: curl -fsS --retry 12 --retry-delay 5 --retry-all-errors "${URL}/api/ready"

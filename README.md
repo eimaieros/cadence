@@ -296,7 +296,20 @@ tests/test_sessions.py ................. CRUD, cross-user isolation, SSE, cost, 
 tests/test_ratelimit_and_evals.py ...... window edges, eval harness structure
 tests/test_pricing.py .................. current model rates, conservative fallback
 tests/test_tools.py .................... allowlist, validation, caps, audit, tool streams
+tests/test_client_address.py ........... the edge's viewer header, per-viewer budgets
 ```
+
+### On AWS
+
+`infra/` deploys it as one CDK stack: CloudFront in front of a single Graviton
+instance running this compose setup behind Caddy, PostgreSQL on its own
+encrypted volume with daily snapshots, and a GitHub Actions workflow that ships
+`main` through OIDC — no AWS key stored anywhere. The host takes HTTP only from
+CloudFront, over a VPC origin, and has no SSH port. One instance instead of
+Fargate, a load balancer and RDS is a cost decision, made with the numbers:
+[infra/README.md](infra/README.md) has them, along with what the bigger shape
+would buy and when it would be worth it. The stack's tests hold each of those
+properties to the synthesized template in CI.
 
 ---
 

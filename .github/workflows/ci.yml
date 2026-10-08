@@ -113,6 +113,33 @@ jobs:
 
       - run: npm run build
 
+  # The AWS deployment (infra/, deploy/). Nothing here talks to AWS: the stack
+  # is synthesized and its tests assert on the template, and the scripts that
+  # run on the host go through shellcheck. A change that would open port 22 or
+  # widen the deploy role fails here, not in the account.
+  infra:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: infra
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: infra/package-lock.json
+      - run: npm ci
+      - name: Types
+        run: npx tsc --noEmit
+      - name: Stack tests
+        run: npm test
+      - name: Synthesize
+        run: npx cdk synth --quiet -c alertEmail=ci@example.com
+      - name: Host scripts
+        working-directory: deploy
+        run: shellcheck -S style bootstrap.sh release.sh
+
   # ── os números que o README afirma ────────────────────────────────────────
   #
   # O README diz quantos testes ha em tres sitios, e os tres querem dizer
