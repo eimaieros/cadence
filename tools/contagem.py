@@ -9,6 +9,7 @@ different things:
     README.md      badge                  backend + frontend
     README.md      "the frontend suite has N" frontend only
     README.md      "the SSE parser has N" that source file only
+    README.md      "N backend tests."     backend only
     CONTRIBUTING   next to `pytest -q`    backend only
 
 Nothing was re-measuring any of them, and they drifted apart exactly as you
@@ -65,6 +66,9 @@ def main() -> int:
         ("README.md", re.compile(r"badge/tests-(\d+)-"), total, "cracha: total"),
         ("README.md", re.compile(r"!\[(\d+) tests\]"), total, "texto do cracha: total"),
         ("README.md", re.compile(r"frontend suite has (\d+) tests"), a.frontend, "so o frontend"),
+        # Esta frase ficou de fora do guarda e ficou nos 96 quando o backend
+        # passou a 112 -- o mesmo defeito que este ficheiro existe para apanhar.
+        ("README.md", re.compile(r"(\d+) backend tests\. They need"), a.backend, "so o backend (README)"),
         ("README.md", re.compile(r"SSE parser has (\d+) tests"), sse_tests, "ficheiro SSE"),
         ("CONTRIBUTING.md", re.compile(r"(\d+) tests, needs a real PostgreSQL"), a.backend, "so o backend"),
     ]

@@ -19,6 +19,7 @@ import uuid
 from datetime import datetime
 
 from sqlalchemy import (
+    Boolean,
     CheckConstraint,
     DateTime,
     Enum,
@@ -186,3 +187,34 @@ class Scorecard(Base):
     __table_args__ = (
         CheckConstraint("overall >= 0 AND overall <= 100", name="ck_scorecard_overall_range"),
     )
+
+
+class ToolCall(Base):
+    """One tool call the interviewer made: what it asked for and what it got back.
+
+    An audit trail, not state the interview depends on. Rows are written as the
+    calls happen, each in its own transaction, so a stream that dies halfway
+    still leaves a record of what ran. Deleting a session deletes its calls at
+    the database level (ON DELETE CASCADE) -- there is deliberately no ORM
+    relationship, so loading a session never drags its audit along.
+    """
+
+    __tablename__ = "tool_calls"
+
+    id: Mapped[uuid.UUID] = mapped_column(PGUUID(as_uuid=True), primary_key=True, default=_uuid)
+    session_id: Mapped[uuid.UUID] = mapped_column(
+        PGUUID(as_uuid=True), ForeignKey("interview_sessions.id", ondelete="CASCADE"), nullable=False
+    )
+    # The interviewer turn being produced when the call ran, and which round of
+    # tool use inside it.
+    turn_index: Mapped[int] = mapped_column(Integer, nullable=False)
+    round: Mapped[int] = mapped_column(Integer, nullable=False)
+    name: Mapped[str] = mapped_column(String(64), nullable=False)
+    arguments: Mapped[dict] = mapped_column(JSONB, default=dict, nullable=False)
+    result: Mapped[dict] = mapped_column(JSONB, default=dict, nullable=False)
+    ok: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+    __table_args__ = (Index("ix_tool_calls_session_turn", "session_id", "turn_index"),)

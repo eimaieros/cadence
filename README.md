@@ -9,7 +9,7 @@ scorecard that cites the moments that earned each score.
 [![CI](https://github.com/eimaieros/cadence/actions/workflows/ci.yml/badge.svg)](https://github.com/eimaieros/cadence/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 ![Python 3.12](https://img.shields.io/badge/python-3.12-blue)
-![141 tests](https://img.shields.io/badge/tests-141-brightgreen)
+![157 tests](https://img.shields.io/badge/tests-157-brightgreen)
 
 Built with FastAPI, PostgreSQL, and Next.js. Runs with no API key.
 
@@ -36,6 +36,7 @@ the parts I actually built:
 | **Structured output, validated** | The scorer is told to return JSON. That JSON is parsed and validated against a Pydantic model with bounded score ranges. Validation failure is a retry with the error fed back, not a shrug. |
 | **A spend guardrail** | Recorded spend is checked before each new interview call. An in-flight call can cross the threshold and final scoring remains available, so this is deliberately not marketed as a hard reservation. |
 | **Prompt injection treated as real** | Candidate text is data, never instructions. It never touches the system prompt. |
+| **Tool calling, bound on the server** | The interviewer can check coverage, read the rubric and flag a follow-up before it asks. Tools come from an allowlist, inputs are validated before anything runs, no tool takes a session id, and every call lands in an audit table the owner can read. |
 | **Tenancy enforced in one place** | Every session route resolves through one ownership dependency. There is no handler that can forget. |
 | **Refresh tokens that really rotate** | Every refresh consumes one server-side token row. Replay revokes its entire family; logout does the same. |
 | **Tests against real PostgreSQL** | The schema uses JSONB and native enums. A SQLite test suite would pass while production broke. |
@@ -74,7 +75,8 @@ the parts I actually built:
 ```
 users ──< interview_sessions ──< turns
   │                 │
-  │                 └──── scorecards (1:1)
+  │                 ├──── scorecards (1:1)
+  │                 └──< tool_calls (the interviewer's audit)
   └──── refresh_tokens (rotating families)
 ```
 
@@ -189,6 +191,32 @@ prices used for the local estimate are pinned in code and covered by tests;
 unknown model IDs use the most conservative known rate instead of silently
 undercounting the spend guardrail. Both model IDs remain environment overrides.
 
+### Tools the model can call, and what it cannot
+
+Before each question the interviewer may call three tools
+([`app/llm/tools.py`](backend/app/llm/tools.py)): `get_coverage` (questions
+left, focus areas still untouched), `get_rubric` (what a 1, a 3 and a 5 look
+like on one scored dimension) and `flag_follow_up` (record that an answer left
+something to come back to, then ask about it).
+
+The interesting part is what the model is *not* given:
+
+- **No identifiers.** Every handler is bound to the streaming session on the
+  server. No tool takes a session id, and inputs forbid unknown fields, so a
+  prompt that talks the model into "check session 42" has nowhere to put it.
+- **No exceptions.** Unknown tools, invalid inputs and failing handlers all
+  become error *results* the model reads. A bad call never ends the stream.
+- **No loops.** Two rounds of tools, then a round that offers none, so the
+  model has to write the question. Three calls per round; extras are answered
+  with an error rather than run, because every `tool_use` needs a
+  `tool_result`.
+
+Each call is written to `tool_calls` as it happens, in its own transaction, so
+a stream that dies halfway still leaves a record. Results go back to the model
+as data and never into a system prompt; one of them echoes a topic the model
+wrote after reading candidate text. The scripted provider uses the tools too,
+by fixed rules, so the whole path runs offline.
+
 ### Prompt injection
 
 A practice-interview tool takes free text from a user and feeds it to a model
@@ -248,7 +276,7 @@ npm run dev
 cd backend && pytest -q
 ```
 
-96 backend tests. They need `cadence_test` to exist; the schema is dropped and recreated
+112 backend tests. They need `cadence_test` to exist; the schema is dropped and recreated
 per test, so never point `DATABASE_URL` at anything you care about.
 
 The frontend suite has 45 tests: 20 protocol edge cases for SSE, four for
@@ -267,6 +295,7 @@ tests/test_config.py ................... production secrets and bounded settings
 tests/test_sessions.py ................. CRUD, cross-user isolation, SSE, cost, scoring
 tests/test_ratelimit_and_evals.py ...... window edges, eval harness structure
 tests/test_pricing.py .................. current model rates, conservative fallback
+tests/test_tools.py .................... allowlist, validation, caps, audit, tool streams
 ```
 
 ---
@@ -288,6 +317,7 @@ tests/test_pricing.py .................. current model rates, conservative fallb
 | `GET` | `/sessions/{id}/stream` | **SSE** — next question, token by token |
 | `POST` | `/sessions/{id}/complete` | end and score |
 | `GET` | `/sessions/{id}/cost` | recorded spend against guardrail |
+| `GET` | `/sessions/{id}/tool-calls` | the interviewer's tool audit, owner only |
 | `GET` | `/health` | liveness — answers only "is this process alive" |
 | `GET` | `/ready` | readiness — 503 while the database is unreachable |
 
@@ -296,6 +326,9 @@ tests/test_pricing.py .................. current model rates, conservative fallb
 ```
 event: start
 data: {"index": 0}
+
+event: tool
+data: {"name": "get_coverage"}
 
 event: token
 data: {"text": "Walk "}
