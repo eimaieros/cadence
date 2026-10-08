@@ -12,6 +12,10 @@ The provider is chosen once at startup and injected, which is what makes the
 tests deterministic: they assert on transport and persistence behaviour, not on
 what a model happened to say that afternoon.
 
+Both implement tool use (``supports_tools``). A provider without that attribute
+is still a valid provider: the interview route simply never offers it tools,
+which is what keeps a minimal test double to one method.
+
 Cost note: prices are hardcoded estimates for accounting only. They feed the
 recorded-spend guardrail, not an invoice or a hard reservation. Confirm current
 prices at https://platform.claude.com/docs/en/about-claude/pricing before relying on
@@ -65,11 +69,42 @@ class Usage:
 
 
 @dataclass
+class ToolCallRequest:
+    """One tool call as the model asked for it, before anything validates it.
+
+    ``input`` is None when the streamed JSON did not parse into an object; the
+    call still needs an answer, and validation turns it into an error result.
+    """
+
+    id: str
+    name: str
+    input: dict | None
+    raw: str = ""
+
+
+@dataclass
 class StreamResult:
     """Filled in as a stream is consumed; read after it completes."""
 
     text: str = ""
     usage: Usage = field(default_factory=Usage)
+    tool_calls: list[ToolCallRequest] = field(default_factory=list)
+    stop_reason: str | None = None
+
+
+def _tool_call(block: dict, fragments: list[str]) -> ToolCallRequest:
+    raw = "".join(fragments).strip()
+    try:
+        # An empty input streams as no fragments at all.
+        parsed = json.loads(raw) if raw else {}
+    except json.JSONDecodeError:
+        parsed = None
+    return ToolCallRequest(
+        id=str(block.get("id", "")),
+        name=str(block.get("name", "")),
+        input=parsed if isinstance(parsed, dict) else None,
+        raw=raw,
+    )
 
 
 class LLMError(Exception):
@@ -93,6 +128,7 @@ class Provider(Protocol):
 
 class AnthropicProvider:
     name = "anthropic"
+    supports_tools = True
 
     def __init__(self, api_key: str, timeout: float = 60.0, max_attempts: int = 4) -> None:
         self._api_key = api_key
@@ -130,20 +166,32 @@ class AnthropicProvider:
         return isinstance(exc, json.JSONDecodeError)
 
     async def stream(
-        self, *, system: str, messages: list[dict], model: str, result: StreamResult
+        self,
+        *,
+        system: str,
+        messages: list[dict],
+        model: str,
+        result: StreamResult,
+        tools: list[dict] | None = None,
     ) -> AsyncIterator[str]:
-        payload = {
+        payload: dict = {
             "model": model,
             "max_tokens": settings.llm_max_tokens,
             "system": system,
             "messages": messages,
             "stream": True,
         }
+        if tools:
+            payload["tools"] = tools
         last_error: Exception | None = None
 
         for attempt in range(self._max_attempts):
             chunks: list[str] = []
             usage = Usage(model=model)
+            # Tool calls stream as a block start plus JSON fragments, keyed by
+            # the block's index; they are assembled when the message ends.
+            calls: dict[int, tuple[dict, list[str]]] = {}
+            stop_reason: str | None = None
             try:
                 async with self._client.stream("POST", API_URL, json=payload) as response:
                     if response.status_code in _RETRYABLE_STATUS:
@@ -165,21 +213,36 @@ class AnthropicProvider:
                         etype = event.get("type")
 
                         if etype == "content_block_delta":
-                            piece = event.get("delta", {}).get("text", "")
+                            delta = event.get("delta", {})
+                            if delta.get("type") == "input_json_delta":
+                                entry = calls.get(event.get("index", -1))
+                                if entry is not None:
+                                    entry[1].append(str(delta.get("partial_json", "")))
+                                continue
+                            piece = delta.get("text", "")
                             if piece:
                                 chunks.append(piece)
                                 yield piece
+                        elif etype == "content_block_start":
+                            block = event.get("content_block", {})
+                            if block.get("type") == "tool_use":
+                                calls[event.get("index", len(calls))] = (block, [])
                         elif etype == "message_start":
                             u = event.get("message", {}).get("usage", {})
                             usage.input_tokens = u.get("input_tokens", 0)
                         elif etype == "message_delta":
                             u = event.get("usage", {})
                             usage.output_tokens = u.get("output_tokens", 0)
+                            stop_reason = event.get("delta", {}).get("stop_reason") or stop_reason
                         elif etype == "error":
                             raise LLMError(str(event.get("error", "upstream error")))
 
                 result.text = "".join(chunks)
                 result.usage = usage
+                result.tool_calls = [
+                    _tool_call(block, fragments) for _, (block, fragments) in sorted(calls.items())
+                ]
+                result.stop_reason = stop_reason
                 return
             except (httpx.HTTPStatusError, httpx.TransportError, json.JSONDecodeError) as exc:
                 last_error = exc
@@ -187,8 +250,10 @@ class AnthropicProvider:
                 # the client, restarting would duplicate visible output --
                 # a partial answer is better than a doubled one.
                 if chunks:
+                    # A half-streamed tool call is not a call anybody should run.
                     result.text = "".join(chunks)
                     result.usage = usage
+                    result.tool_calls = []
                     return
                 if not self._retryable(exc):
                     raise LLMError(
@@ -322,23 +387,98 @@ class ScriptedProvider:
     Streams token by token with a small delay so the front end exercises the
     real streaming path rather than a special case -- an SSE bug that only
     appears against the real API is a bug you find in production.
+
+    When offered tools it uses them the way the prompt asks, by fixed rules, so
+    the tool path runs offline as well: it checks coverage before the first
+    question, and flags an answer that made its case without a single number,
+    then asks for the number.
     """
 
     name = "scripted"
+    supports_tools = True
 
     def __init__(self, delay: float = 0.02) -> None:
         self._delay = delay
 
     @staticmethod
-    def _pick_question(messages: list[dict]) -> str:
-        asked = sum(1 for m in messages if m.get("role") == "assistant")
+    def _questions_asked(messages: list[dict]) -> int:
+        # Tool-use turns carry a list of blocks; only text turns are questions.
+        return sum(
+            1 for m in messages if m.get("role") == "assistant" and isinstance(m.get("content"), str)
+        )
+
+    @staticmethod
+    def _last_answer(messages: list[dict]) -> str | None:
+        """The candidate's latest answer, if the last question has one."""
+        for i in range(len(messages) - 1, 0, -1):
+            m = messages[i]
+            if m.get("role") == "assistant" and isinstance(m.get("content"), str):
+                return None
+            if m.get("role") == "user" and isinstance(m.get("content"), str):
+                return m["content"]
+        return None
+
+    @staticmethod
+    def _flagged_topic(messages: list[dict]) -> str | None:
+        """The topic flagged in the tool round that just finished, if any."""
+        if len(messages) < 2 or not isinstance(messages[-2].get("content"), list):
+            return None
+        for block in messages[-2]["content"]:
+            if (
+                isinstance(block, dict)
+                and block.get("type") == "tool_use"
+                and block.get("name") == "flag_follow_up"
+            ):
+                topic = block.get("input", {}).get("topic")
+                return topic if isinstance(topic, str) else None
+        return None
+
+    def _plan_tool(self, messages: list[dict], tools: list[dict] | None) -> ToolCallRequest | None:
+        if not tools or (messages and isinstance(messages[-1].get("content"), list)):
+            return None
+        offered = {t.get("name") for t in tools}
+        asked = self._questions_asked(messages)
+        if asked == 0 and "get_coverage" in offered:
+            return ToolCallRequest(id="scripted-coverage", name="get_coverage", input={})
+        answer = self._last_answer(messages)
+        if answer and not any(ch.isdigit() for ch in answer) and "flag_follow_up" in offered:
+            topic = " ".join(answer.split()[:8])[:80]
+            return ToolCallRequest(
+                id=f"scripted-follow-up-{asked}",
+                name="flag_follow_up",
+                input={"topic": topic, "reason": "no_number"},
+            )
+        return None
+
+    def _pick_question(self, messages: list[dict]) -> str:
+        topic = self._flagged_topic(messages)
+        if topic:
+            return (
+                f'Before we move on -- you said "{topic}". What number would you put on '
+                f"that: users, requests, latency or money?"
+            )
+        asked = self._questions_asked(messages)
         if asked >= len(_QUESTION_BANK):
             return "That's everything I wanted to cover. Thanks -- end the session to see your scorecard."
         return _QUESTION_BANK[asked]
 
     async def stream(
-        self, *, system: str, messages: list[dict], model: str, result: StreamResult
+        self,
+        *,
+        system: str,
+        messages: list[dict],
+        model: str,
+        result: StreamResult,
+        tools: list[dict] | None = None,
     ) -> AsyncIterator[str]:
+        call = self._plan_tool(messages, tools)
+        if call is not None:
+            result.text = ""
+            result.tool_calls = [call]
+            result.stop_reason = "tool_use"
+            result.usage = Usage(input_tokens=len(system) // 4, output_tokens=8, model=model)
+            return
+
         text = self._pick_question(messages)
         emitted: list[str] = []
         for word in text.split(" "):
@@ -349,6 +489,7 @@ class ScriptedProvider:
                 await asyncio.sleep(self._delay)
         final = "".join(emitted).strip()
         result.text = final
+        result.stop_reason = "end_turn"
         # Rough token estimate purely so the cost path is exercised end to end.
         result.usage = Usage(
             input_tokens=len(system) // 4,

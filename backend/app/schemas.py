@@ -166,6 +166,20 @@ class SessionDetail(SessionSummary):
     scorecard: ScorecardOut | None = None
 
 
+class ToolCallOut(BaseModel):
+    """One row of the interviewer's tool audit, as the session owner sees it."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    turn_index: int
+    round: int
+    name: str
+    arguments: dict
+    result: dict
+    ok: bool
+    created_at: datetime
+
+
 class CostState(BaseModel):
     spent_usd: float
     ceiling_usd: float
