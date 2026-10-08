@@ -19,6 +19,7 @@ the streaming, so you can work on the whole app offline and never spend a cent.
 cd backend && pytest -q          # 96 tests, needs a real PostgreSQL
 python -m evals.run              # scorer evals, structural tier, no key needed
 cd frontend && npx tsc --noEmit  # types
+cd frontend && npm test          # Vitest; component tests run in jsdom
 ```
 
 ## Four traps this codebase already fell into

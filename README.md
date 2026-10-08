@@ -9,7 +9,7 @@ scorecard that cites the moments that earned each score.
 [![CI](https://github.com/eimaieros/cadence/actions/workflows/ci.yml/badge.svg)](https://github.com/eimaieros/cadence/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 ![Python 3.12](https://img.shields.io/badge/python-3.12-blue)
-![120 tests](https://img.shields.io/badge/tests-120-brightgreen)
+![141 tests](https://img.shields.io/badge/tests-141-brightgreen)
 
 Built with FastAPI, PostgreSQL, and Next.js. Runs with no API key.
 
@@ -251,8 +251,15 @@ cd backend && pytest -q
 96 backend tests. They need `cadence_test` to exist; the schema is dropped and recreated
 per test, so never point `DATABASE_URL` at anything you care about.
 
-The frontend suite has 24 tests: 20 protocol edge cases for SSE and four for
-token-pair storage, automatic rotation, concurrent 401s and rejected replay.
+The frontend suite has 45 tests: 20 protocol edge cases for SSE, four for
+token-pair storage, automatic rotation, concurrent 401s and rejected replay, and
+21 component tests with React Testing Library. Those drive the pages the way a
+person does — by label, role and visible text, never by state or class names:
+the question typing itself in while the composer stays locked, a failed send
+that keeps what you wrote, leaving the room cancelling the stream, the 72-byte
+password limit counted in UTF-8 bytes the way bcrypt counts it, and reduced
+motion in the landing hero. Each was checked by breaking the behaviour it
+describes and watching that test, and only that test, fail.
 
 ```
 tests/test_auth.py ..................... auth, token type confusion, hash leakage
