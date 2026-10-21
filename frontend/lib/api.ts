@@ -1,4 +1,5 @@
 import { SseParser } from "./sse";
+import { createDemoFetch } from "./demo/server";
 import type { z } from "zod";
 import {
   CostSchema,
@@ -14,6 +15,16 @@ import {
 } from "./schemas";
 
 const BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+
+/* The static demo (NEXT_PUBLIC_DEMO=1) swaps the network for an in-memory copy
+   of the API — see lib/demo/server.ts. Everything above the transport runs
+   unchanged. The flag is inlined at build time, so a normal build drops the
+   demo branch entirely. */
+const DEMO = process.env.NEXT_PUBLIC_DEMO === "1";
+const http: typeof fetch = DEMO
+  ? createDemoFetch(BASE)
+  : (input, init) => fetch(input, init);
+
 const ACCESS_KEY = "cadence.access";
 const REFRESH_KEY = "cadence.refresh";
 
@@ -81,7 +92,7 @@ async function refreshSession(): Promise<boolean> {
 
   refreshInFlight = (async () => {
     try {
-      const res = await fetch(`${BASE}/auth/refresh`, {
+      const res = await http(`${BASE}/auth/refresh`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ refresh_token: refresh }),
@@ -109,7 +120,7 @@ async function fetchWithAuth(
 ): Promise<Response> {
   const accessUsed = auth.get();
   const send = () =>
-    fetch(`${BASE}${path}`, { ...init, headers: headers(json, init.headers) });
+    http(`${BASE}${path}`, { ...init, headers: headers(json, init.headers) });
   let res = await send();
 
   const sessionEndpoint = !new Set([
@@ -168,7 +179,7 @@ export const api = {
   logout: async () => {
     const refresh = auth.getRefresh();
     if (!refresh) return;
-    await fetch(`${BASE}/auth/logout`, {
+    await http(`${BASE}/auth/logout`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ refresh_token: refresh }),
