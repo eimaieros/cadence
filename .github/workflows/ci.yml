@@ -113,6 +113,13 @@ jobs:
 
       - run: npm run build
 
+      # The static demo served at rodrigofigueiredo.dev/cadence/ is the same app
+      # built with the network swapped for lib/demo/server.ts. Building it here
+      # means a change that breaks the export (a dynamic route without static
+      # params, a server-only API) fails in CI, not on the portfolio.
+      - name: Demo build (static export)
+        run: NEXT_PUBLIC_DEMO=1 npx next build && test -f out/index.html && test -f out/sessions/demo-1/index.html
+
   # The AWS deployment (infra/, deploy/). Nothing here talks to AWS: the stack
   # is synthesized and its tests assert on the template, and the scripts that
   # run on the host go through shellcheck. A change that would open port 22 or

@@ -9,7 +9,7 @@ scorecard that cites the moments that earned each score.
 [![CI](https://github.com/eimaieros/cadence/actions/workflows/ci.yml/badge.svg)](https://github.com/eimaieros/cadence/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 ![Python 3.12](https://img.shields.io/badge/python-3.12-blue)
-![172 tests](https://img.shields.io/badge/tests-172-brightgreen)
+![184 tests](https://img.shields.io/badge/tests-184-brightgreen)
 
 Built with FastAPI, PostgreSQL, and Next.js. Runs with no API key.
 
@@ -22,6 +22,12 @@ docker compose up
 That is the whole setup. Without `ANTHROPIC_API_KEY` the backend runs a scripted
 interviewer instead of calling a model — every code path is identical, including
 the streaming, so the app is fully demoable offline.
+
+**Try it without installing anything:** [rodrigofigueiredo.dev/cadence](https://rodrigofigueiredo.dev/cadence/).
+That is the same front end built with `NEXT_PUBLIC_DEMO=1`: the pages, the Zod
+parsing, the token refresh and the SSE parser run unchanged, and only the network
+is swapped for an in-memory copy of the API ([`frontend/lib/demo/`](frontend/lib/demo/))
+running the backend's scripted interviewer. Nothing leaves the browser tab.
 
 ---
 
@@ -279,7 +285,7 @@ cd backend && pytest -q
 127 backend tests. They need `cadence_test` to exist; the schema is dropped and recreated
 per test, so never point `DATABASE_URL` at anything you care about.
 
-The frontend suite has 45 tests: 20 protocol edge cases for SSE, four for
+The frontend suite has 57 tests: 20 protocol edge cases for SSE, four for
 token-pair storage, automatic rotation, concurrent 401s and rejected replay, and
 21 component tests with React Testing Library. Those drive the pages the way a
 person does — by label, role and visible text, never by state or class names:
@@ -288,6 +294,13 @@ that keeps what you wrote, leaving the room cancelling the stream, the 72-byte
 password limit counted in UTF-8 bytes the way bcrypt counts it, and reduced
 motion in the landing hero. Each was checked by breaking the behaviour it
 describes and watching that test, and only that test, fail.
+
+The other 12 cover the browser demo: eight hold its stand-in API to the
+backend's contract (status codes, `detail` messages, the follow-up rule, the
+question limit, refresh rotation, an aborted stream persisting nothing), and
+four read the backend's Python source and fail if the demo's copy of the
+scripted interviewer — questions, scorecard, follow-up wording, limits — drifts
+from it.
 
 ```
 tests/test_auth.py ..................... auth, token type confusion, hash leakage

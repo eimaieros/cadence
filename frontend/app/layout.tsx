@@ -30,7 +30,21 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           rel="stylesheet"
         />
       </head>
-      <body className="min-h-screen antialiased">{children}</body>
+      <body className="min-h-screen antialiased">
+        {process.env.NEXT_PUBLIC_DEMO === "1" && (
+          <p
+            role="note"
+            className="bg-[#16181c] px-4 py-2 text-center font-mono text-[0.72rem] tracking-wide text-white/80"
+          >
+            Demo: runs entirely in your browser, with the scripted interviewer cadence uses
+            offline. Register with any email; nothing leaves this tab.{" "}
+            <a className="underline" href="https://github.com/eimaieros/cadence">
+              Source on GitHub
+            </a>
+          </p>
+        )}
+        {children}
+      </body>
     </html>
   );
 }
