@@ -12,3 +12,7 @@ out/
 *.log
 .pytest_cache/
 .mypy_cache/
+
+# Local notes
+*.md
+!README.md
