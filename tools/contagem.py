@@ -3,17 +3,16 @@
 
 WHY THIS EXISTS.
 
-This repository states a test count in three places and they mean three
+This repository states a test count in several places, and they mean
 different things:
 
     README.md      badge                  backend + frontend
     README.md      "the frontend suite has N" frontend only
     README.md      "the SSE parser has N" that source file only
     README.md      "N backend tests."     backend only
-    CONTRIBUTING   next to `pytest -q`    backend only
 
 Nothing was re-measuring any of them, and they drifted apart exactly as you
-would expect. On one commit the badge said 85 while CONTRIBUTING said 44 -- the
+would expect. On one commit the badge said 85 while another count said 44 -- the
 second was the backend count from before the observability tests existed, and
 had been wrong for a week.
 
@@ -70,7 +69,6 @@ def main() -> int:
         # passou a 112 -- o mesmo defeito que este ficheiro existe para apanhar.
         ("README.md", re.compile(r"(\d+) backend tests\. They need"), a.backend, "so o backend (README)"),
         ("README.md", re.compile(r"SSE parser has (\d+) tests"), sse_tests, "ficheiro SSE"),
-        ("CONTRIBUTING.md", re.compile(r"(\d+) tests, needs a real PostgreSQL"), a.backend, "so o backend"),
     ]
 
     errado = 0

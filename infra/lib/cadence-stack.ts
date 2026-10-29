@@ -35,8 +35,7 @@ import type { Construct } from "constructs";
 
   The shape a bigger product would have -- Fargate behind a load balancer, RDS --
   costs several times as much before the first request, and every part of it
-  would idle here. infra/README.md has the numbers, and what would make that
-  trade worth it.
+  would idle here.
 
   What each piece is for:
   * CloudFront ends TLS on a *.cloudfront.net certificate (no domain needed),

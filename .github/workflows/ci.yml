@@ -151,8 +151,8 @@ jobs:
   #
   # O README diz quantos testes ha em tres sitios, e os tres querem dizer
   # coisas diferentes: o cracha e o total, a frase sobre o parser SSE e so o
-  # frontend, e o CONTRIBUTING e so o backend. Nenhum estava a ser re-medido, e
-  # afastaram-se: numa commit o cracha dizia 85 e o CONTRIBUTING dizia 44, que
+  # frontend, e a frase do backend e so o backend. Nenhum estava a ser re-medido, e
+  # afastaram-se: numa commit o cracha dizia 85 e outra frase dizia 44, que
   # era a contagem do backend de antes dos testes de observabilidade existirem.
   #
   # Este job existe porque as duas suites correm em jobs separados — precisa das

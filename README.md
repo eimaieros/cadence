@@ -319,9 +319,8 @@ instance running this compose setup behind Caddy, PostgreSQL on its own
 encrypted volume with daily snapshots, and a GitHub Actions workflow that ships
 `main` through OIDC — no AWS key stored anywhere. The host takes HTTP only from
 CloudFront, over a VPC origin, and has no SSH port. One instance instead of
-Fargate, a load balancer and RDS is a cost decision, made with the numbers:
-[infra/README.md](infra/README.md) has them, along with what the bigger shape
-would buy and when it would be worth it. The stack's tests hold each of those
+Fargate, a load balancer and RDS is a cost decision: the bigger shape costs
+several times as much before the first request. The stack's tests hold each of those
 properties to the synthesized template in CI.
 
 ---
@@ -418,9 +417,7 @@ Honest about what this is not:
 
 ## Contributing
 
-[CONTRIBUTING.md](CONTRIBUTING.md) covers how to run it and the traps worth
-knowing before you change anything. Security reports go to
-[SECURITY.md](SECURITY.md).
+Issues and pull requests are welcome.
 
 ## Licence
 
