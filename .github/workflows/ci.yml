@@ -78,6 +78,13 @@ jobs:
           JWT_SECRET: ci-only-not-a-real-secret
         run: python -m evals.run
 
+      # Retrieval over the job description has its own floor. It runs with the
+      # offline embedder, so it needs no key and no database, and a change to
+      # chunking or embedding that sends the interviewer to the wrong passage
+      # fails here instead of in an interview.
+      - name: Retrieval evals
+        run: python -m evals.retrieval
+
   frontend:
     runs-on: ubuntu-latest
     outputs:
