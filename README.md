@@ -13,6 +13,8 @@ scorecard that cites the moments that earned each score.
 
 Built with FastAPI, PostgreSQL, and Next.js. Runs with no API key.
 
+[![cadence: the scorecard the app produces, and the SSE frames that stream a question](.github/preview.webp)](https://rodrigofigueiredo.dev/cadence/)
+
 ```bash
 git clone <this-repo> && cd cadence
 docker compose up
