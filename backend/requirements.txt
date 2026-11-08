@@ -5,6 +5,9 @@ alembic==1.19.1
 pydantic[email]==2.13.4
 pydantic-settings==2.15.0
 bcrypt==5.0.0
-pyjwt==2.13.0
+pyjwt==2.15.0
 httpx==0.28.1
 python-multipart==0.0.32
+# Not used directly: pulled in by email-validator (pydantic[email]). Pinned so
+# the resolver cannot pick a version with a known advisory.
+dnspython==2.9.0
