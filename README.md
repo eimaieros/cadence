@@ -386,7 +386,9 @@ tests/test_job_description.py .......... pgvector search, session isolation, the
 instance running this compose setup behind Caddy, PostgreSQL on its own
 encrypted volume with daily snapshots, and a GitHub Actions workflow that ships
 `main` through OIDC — no AWS key stored anywhere. The host takes HTTP only from
-CloudFront, over a VPC origin, and has no SSH port. One instance instead of
+CloudFront, over a VPC origin, and has no SSH port. Every response leaves the
+edge with HSTS, `nosniff`, frame and referrer headers from AWS's managed
+security policy. One instance instead of
 Fargate, a load balancer and RDS is a cost decision: the bigger shape costs
 several times as much before the first request. The stack's tests hold each of those
 properties to the synthesized template in CI.
