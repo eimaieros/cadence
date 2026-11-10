@@ -9,7 +9,7 @@ scorecard that cites the moments that earned each score.
 [![CI](https://github.com/eimaieros/cadence/actions/workflows/ci.yml/badge.svg)](https://github.com/eimaieros/cadence/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 ![Python 3.12](https://img.shields.io/badge/python-3.12-blue)
-![184 tests](https://img.shields.io/badge/tests-184-brightgreen)
+![220 tests](https://img.shields.io/badge/tests-220-brightgreen)
 
 Built with FastAPI, PostgreSQL, and Next.js. Runs with no API key.
 
@@ -45,6 +45,7 @@ the parts I actually built:
 | **A spend guardrail** | Recorded spend is checked before each new interview call. An in-flight call can cross the threshold and final scoring remains available, so this is deliberately not marketed as a hard reservation. |
 | **Prompt injection treated as real** | Candidate text is data, never instructions. It never touches the system prompt. |
 | **Tool calling, bound on the server** | The interviewer can check coverage, read the rubric and flag a follow-up before it asks. Tools come from an allowlist, inputs are validated before anything runs, no tool takes a session id, and every call lands in an audit table the owner can read. |
+| **Retrieval over the job description** | Paste the ad when you start. It is split into passages, embedded and stored in PostgreSQL with pgvector, and the interviewer searches it through a tool, so a third party's text reaches the model as data and never as instructions. Retrieval has its own eval, with recall@k and MRR floors, in CI. |
 | **Tenancy enforced in one place** | Every session route resolves through one ownership dependency. There is no handler that can forget. |
 | **Refresh tokens that really rotate** | Every refresh consumes one server-side token row. Replay revokes its entire family; logout does the same. |
 | **Tests against real PostgreSQL** | The schema uses JSONB and native enums. A SQLite test suite would pass while production broke. |
@@ -73,9 +74,10 @@ the parts I actually built:
                                  │  └───────────┬─────────────┘  │
                                  └──────────────┼────────────────┘
                                                 ▼
-                                        ┌───────────────┐
-                                        │ PostgreSQL 16 │
-                                        └───────────────┘
+                                      ┌──────────────────┐
+                                      │ PostgreSQL 16    │
+                                      │ + pgvector       │
+                                      └──────────────────┘
 ```
 
 ### Data model
@@ -84,7 +86,8 @@ the parts I actually built:
 users ──< interview_sessions ──< turns
   │                 │
   │                 ├──── scorecards (1:1)
-  │                 └──< tool_calls (the interviewer's audit)
+  │                 ├──< tool_calls (the interviewer's audit)
+  │                 └──< job_description_chunks (passages + vectors, searched by the interviewer)
   └──── refresh_tokens (rotating families)
 ```
 
@@ -201,11 +204,12 @@ undercounting the spend guardrail. Both model IDs remain environment overrides.
 
 ### Tools the model can call, and what it cannot
 
-Before each question the interviewer may call three tools
+Before each question the interviewer may call up to four tools
 ([`app/llm/tools.py`](backend/app/llm/tools.py)): `get_coverage` (questions
 left, focus areas still untouched), `get_rubric` (what a 1, a 3 and a 5 look
-like on one scored dimension) and `flag_follow_up` (record that an answer left
-something to come back to, then ask about it).
+like on one scored dimension), `flag_follow_up` (record that an answer left
+something to come back to, then ask about it) and, when the session has a job
+description, `search_job_description` (the passages closest to a query).
 
 The interesting part is what the model is *not* given:
 
@@ -224,6 +228,55 @@ a stream that dies halfway still leaves a record. Results go back to the model
 as data and never into a system prompt; one of them echoes a topic the model
 wrote after reading candidate text. The scripted provider uses the tools too,
 by fixed rules, so the whole path runs offline.
+
+### Retrieval, as a tool rather than a bigger prompt
+
+When you start an interview you can paste the job ad. The obvious move is to
+put it in the system prompt. That is the one place this codebase never puts user
+text, and a job ad is worse than user text: somebody else wrote it, and the
+candidate copied it in without reading every line.
+
+So the ad becomes passages ([`app/retrieval/`](backend/app/retrieval)), and the
+interviewer gets a tool that searches them:
+
+- **Chunking follows the ad's own structure.** Paragraphs and bullet points,
+  around 500 characters, a heading carried with the items under it, and one
+  short item of overlap between passages. A requirements list cut in the
+  middle of a bullet retrieves half a requirement.
+- **Stored in PostgreSQL with pgvector**, in the same transaction as the
+  session, and gone with it (`ON DELETE CASCADE`). The ad is never stored whole
+  and never returned by the API: it exists only as passages to search.
+- **Ranked by the database**, with pgvector's cosine distance (`<=>`) and no
+  index. One ad is a few dozen rows behind a `WHERE session_id = ...`; an HNSW
+  index earns its keep at thousands of vectors, and costs recall before that.
+- **Bound to the session on the server.** The tool takes a query and a count
+  and nothing else. It is offered only when the session has an ad, and a test
+  holds that a search bound to one session never returns another's passages,
+  including another user's.
+- **Passages come back as data.** They arrive in a `tool_result`, and a test
+  plants `Ignore previous instructions` in an ad and fails if it shows up
+  anywhere else — the system prompt, or any message that is not a tool result.
+
+The embedder is the part to be honest about. Out of the box it is a hashing
+embedder: words, word pairs and four-character runs hashed into 1,024
+dimensions with BLAKE2, which gives the same vector in every process and needs
+no key, no download and no network. It keeps the README's promise that the whole
+thing runs without an API key, and makes the tests reproducible. It is also
+lexical: a query that shares no words with the passage it wants does not find
+it. `get_embedder()` in [`store.py`](backend/app/retrieval/store.py) is the one
+place to put a hosted model.
+
+That limit is measured, not guessed. `python -m evals.retrieval` runs three
+invented ads with queries labelled with the passage they should find, and CI
+fails if recall@3 or MRR on the standard queries drops below its floor:
+
+| Queries | recall@1 | recall@3 | MRR |
+|---|---|---|---|
+| Standard (17) | 0.94 | 1.00 | 0.97 |
+| Hard, no shared words (3) | 0.33 | 0.67 | 0.53 |
+
+The hard set is not held to a floor. It is there to show where a lexical
+embedder stops, and it is the number a hosted embedder would have to move.
 
 ### Prompt injection
 
@@ -258,7 +311,9 @@ docker compose up
 
 ### Locally
 
-**Backend** — needs PostgreSQL on :5432
+**Backend** — needs PostgreSQL on :5432 with the
+[pgvector](https://github.com/pgvector/pgvector) extension available
+(`docker run -p 5432:5432 -e POSTGRES_PASSWORD=postgres pgvector/pgvector:pg16`)
 
 ```bash
 cd backend
@@ -284,12 +339,13 @@ npm run dev
 cd backend && pytest -q
 ```
 
-127 backend tests. They need `cadence_test` to exist; the schema is dropped and recreated
+161 backend tests. They need `cadence_test` to exist; the schema is dropped and recreated
 per test, so never point `DATABASE_URL` at anything you care about.
 
-The frontend suite has 57 tests: 20 protocol edge cases for SSE, four for
-token-pair storage, automatic rotation, concurrent 401s and rejected replay, and
-21 component tests with React Testing Library. Those drive the pages the way a
+The frontend suite has 59 tests: 20 protocol edge cases for SSE, four for
+token-pair storage, automatic rotation, concurrent 401s and rejected replay, two
+for the session request (the job description sent trimmed, and left out when
+blank), 21 component tests with React Testing Library. Those drive the pages the way a
 person does — by label, role and visible text, never by state or class names:
 the question typing itself in while the composer stays locked, a failed send
 that keeps what you wrote, leaving the room cancelling the stream, the 72-byte
@@ -312,6 +368,8 @@ tests/test_ratelimit_and_evals.py ...... window edges, eval harness structure
 tests/test_pricing.py .................. current model rates, conservative fallback
 tests/test_tools.py .................... allowlist, validation, caps, audit, tool streams
 tests/test_client_address.py ........... the edge's viewer header, per-viewer budgets
+tests/test_retrieval.py ................ chunking, the offline embedder, the eval's own maths
+tests/test_job_description.py .......... pgvector search, session isolation, the search tool
 ```
 
 ### On AWS
@@ -336,7 +394,7 @@ properties to the synthesized template in CI.
 | `POST` | `/auth/refresh` | consume refresh token → rotated pair |
 | `POST` | `/auth/logout` | revoke the refresh-token family |
 | `GET` | `/auth/me` | current user |
-| `POST` | `/sessions` | start an interview |
+| `POST` | `/sessions` | start an interview; `job_description` is optional |
 | `GET` | `/sessions` | list (paginated, caller-scoped) |
 | `GET` | `/sessions/{id}` | transcript + scorecard |
 | `DELETE` | `/sessions/{id}` | |
@@ -413,6 +471,14 @@ Honest about what this is not:
   key and runs on every push. The comparative tier needs a real model and is
   run by hand, so CI catches a prompt change that breaks the schema but not one
   that quietly degrades quality.
+- **The embedder is lexical, and the demo has no retrieval.** The offline
+  hashing embedder finds passages that share words with the query, and misses
+  paraphrases (see the hard queries above). The browser demo has no database,
+  so it hides the job-description field rather than pretend.
+- **The database image moved to `pgvector/pgvector:pg16`, which is Debian.**
+  The old `postgres:16-alpine` sorts text with musl, Debian with glibc, so an
+  existing volume needs `REINDEX DATABASE` once after the switch, or the index
+  on `users.email` can miss rows. A fresh volume needs nothing.
 - **Single region, single writer.** No read replicas, no multi-region story.
 - **Fonts load from a CDN**, not `next/font`, so the project builds offline.
   Self-hosting is a one-file change.
