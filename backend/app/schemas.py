@@ -16,6 +16,7 @@ from typing import Annotated, Literal
 from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator
 
 from app.models import SessionStatus, Speaker
+from app.text import StoredText
 
 # --- Auth -----------------------------------------------------------------
 
@@ -23,7 +24,7 @@ from app.models import SessionStatus, Speaker
 class UserCreate(BaseModel):
     email: EmailStr
     password: Annotated[str, Field(min_length=10, max_length=72)]
-    display_name: Annotated[str, Field(min_length=1, max_length=120)]
+    display_name: Annotated[StoredText, Field(min_length=1, max_length=120)]
 
     @field_validator("password")
     @classmethod
@@ -88,12 +89,12 @@ JOB_DESCRIPTION_MAX_CHARS = 12_000
 
 
 class SessionCreate(BaseModel):
-    role_title: Annotated[str, Field(min_length=2, max_length=160)]
-    focus_areas: list[str] = Field(default_factory=list, max_length=6)
+    role_title: Annotated[StoredText, Field(min_length=2, max_length=160)]
+    focus_areas: list[StoredText] = Field(default_factory=list, max_length=6)
     seniority: Literal["junior", "mid", "senior", "staff"] = "mid"
     # Optional. Split into passages the interviewer can search; the text itself
     # is not stored and never reaches a system prompt. See app/retrieval.
-    job_description: Annotated[str | None, Field(max_length=JOB_DESCRIPTION_MAX_CHARS)] = None
+    job_description: Annotated[StoredText | None, Field(max_length=JOB_DESCRIPTION_MAX_CHARS)] = None
 
     @field_validator("job_description")
     @classmethod
@@ -130,7 +131,7 @@ class TurnOut(BaseModel):
 
 
 class AnswerCreate(BaseModel):
-    content: Annotated[str, Field(min_length=1, max_length=8000)]
+    content: Annotated[StoredText, Field(min_length=1, max_length=8000)]
 
     @field_validator("content")
     @classmethod
@@ -145,7 +146,7 @@ class DimensionScore(BaseModel):
 
     name: str
     score: Annotated[int, Field(ge=1, le=5)]
-    note: Annotated[str, Field(max_length=400)]
+    note: Annotated[StoredText, Field(max_length=400)]
 
 
 class ScorecardOut(BaseModel):

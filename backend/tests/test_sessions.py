@@ -183,6 +183,26 @@ async def test_a_stream_locks_out_overlapping_session_mutations(auth_client, app
     assert response.status_code == 200
 
 
+async def test_an_upstream_failure_reaches_the_browser_without_its_details(auth_client, app):
+    from app.llm.client import LLMError
+
+    class FailingProvider:
+        name = "failing-test"
+
+        async def stream(self, *, system, messages, model, result):
+            raise LLMError("upstream 529 from api.example.internal: overloaded_error")
+            yield  # pragma: no cover -- makes this an async generator
+
+    app.state.llm = FailingProvider()
+    session_id = await _create(auth_client)
+
+    async with auth_client.stream("GET", f"/sessions/{session_id}/stream") as resp:
+        body = (await resp.aread()).decode()
+
+    assert "event: error" in body
+    assert "529" not in body and "api.example.internal" not in body
+
+
 async def test_question_limit_blocks_the_seventh_question(auth_client):
     session_id = await _create(auth_client)
     for i in range(6):

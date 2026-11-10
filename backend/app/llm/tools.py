@@ -40,7 +40,9 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, StringConstraints, ValidationError
+from pydantic import AfterValidator, BaseModel, ConfigDict, Field, StringConstraints, ValidationError
+
+from app.text import reject_nul
 
 logger = logging.getLogger(__name__)
 
@@ -111,12 +113,21 @@ class RubricInput(_Strict):
 
 
 class SearchInput(_Strict):
-    query: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=200)]
+    query: Annotated[
+        str,
+        StringConstraints(strip_whitespace=True, min_length=1, max_length=200),
+        AfterValidator(reject_nul),
+    ]
     k: Annotated[int, Field(ge=1, le=4)] = 3
 
 
 class FollowUpInput(_Strict):
-    topic: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=80)]
+    # Stored in the audit as JSONB, which cannot hold U+0000 either.
+    topic: Annotated[
+        str,
+        StringConstraints(strip_whitespace=True, min_length=1, max_length=80),
+        AfterValidator(reject_nul),
+    ]
     reason: Literal["no_number", "vague_claim", "unexplained_tradeoff", "contradiction"]
 
 

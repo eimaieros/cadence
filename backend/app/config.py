@@ -91,6 +91,17 @@ class Settings(BaseSettings):
             raise ValueError(f"client_ip_header is not a header name: {v!r}")
         return name
 
+    @field_validator("cors_origins")
+    @classmethod
+    def _no_wildcard_in_prod(cls, v: list[str], info) -> list[str]:
+        # A wildcard next to allow_credentials is the one CORS setting that
+        # lets any site make authenticated calls. Fine on a laptop, refused in
+        # production.
+        env = (info.data or {}).get("environment")
+        if env == "production" and "*" in v:
+            raise ValueError("cors_origins cannot be '*' in production")
+        return v
+
     @field_validator("jwt_secret")
     @classmethod
     def _reject_default_secret_in_prod(cls, v: str, info) -> str:

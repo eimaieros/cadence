@@ -32,3 +32,10 @@ def test_operational_numbers_are_bounded(field, value):
 def test_only_the_implemented_jwt_algorithm_is_accepted():
     with pytest.raises(ValidationError):
         Settings(jwt_algorithm="none", _env_file=None)
+
+
+def test_production_refuses_a_wildcard_cors_origin():
+    with pytest.raises(ValidationError):
+        Settings(environment="production", jwt_secret="x" * 32, cors_origins="*", _env_file=None)
+    local = Settings(environment="local", cors_origins="*", _env_file=None)
+    assert local.cors_origins == ["*"]

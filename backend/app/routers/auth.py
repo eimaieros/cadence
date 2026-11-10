@@ -1,7 +1,16 @@
-"""Authentication routes."""
+"""Authentication routes.
+
+bcrypt is slow on purpose -- about a quarter of a second at cost 12 -- and that
+time is CPU work, not I/O, so there is nothing to await. Called inside an
+``async def`` it holds the event loop for the whole hash, and every open
+interview stream stalls behind one login. So the hashing runs in a worker
+thread. bcrypt releases the GIL while it works, so that thread runs alongside
+the loop rather than taking turns with it.
+"""
 
 from __future__ import annotations
 
+import asyncio
 import uuid
 from datetime import UTC, datetime
 
@@ -56,7 +65,7 @@ def _tokens_for(user: User, db: DbSession, family_id: uuid.UUID | None = None) -
 async def register(payload: UserCreate, db: DbSession) -> TokenPair:
     user = User(
         email=payload.email.lower(),
-        password_hash=hash_password(payload.password),
+        password_hash=await asyncio.to_thread(hash_password, payload.password),
         display_name=payload.display_name,
     )
     db.add(user)
@@ -81,12 +90,12 @@ async def login(payload: UserLogin, db: DbSession) -> TokenPair:
     # Verify against a dummy hash when the user is missing so the response time
     # does not reveal whether the address exists.
     if user is None:
-        verify_password(payload.password, DUMMY_PASSWORD_HASH)
+        await asyncio.to_thread(verify_password, payload.password, DUMMY_PASSWORD_HASH)
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED, detail="Incorrect email or password"
         )
 
-    if not verify_password(payload.password, user.password_hash):
+    if not await asyncio.to_thread(verify_password, payload.password, user.password_hash):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED, detail="Incorrect email or password"
         )

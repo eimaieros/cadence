@@ -22,6 +22,7 @@ from app.llm.client import LLMError, Provider, Usage
 from app.llm.prompts import render_transcript, scorer_system
 from app.models import Turn
 from app.schemas import DimensionScore
+from app.text import StoredText
 
 logger = logging.getLogger(__name__)
 
@@ -41,12 +42,14 @@ class ScoreDraft(BaseModel):
     """
 
     overall: int = Field(ge=0, le=100)
-    summary: str = Field(min_length=1, max_length=1200)
+    # StoredText: a "\u0000" escape in the model's JSON would otherwise reach
+    # the INSERT. As a validation error it gets the retry like any other.
+    summary: StoredText = Field(min_length=1, max_length=1200)
     dimensions: list[DimensionScore] = Field(
         min_length=len(EXPECTED_DIMENSIONS), max_length=len(EXPECTED_DIMENSIONS)
     )
-    strengths: list[str] = Field(default_factory=list, max_length=8)
-    gaps: list[str] = Field(default_factory=list, max_length=8)
+    strengths: list[StoredText] = Field(default_factory=list, max_length=8)
+    gaps: list[StoredText] = Field(default_factory=list, max_length=8)
 
     @field_validator("dimensions")
     @classmethod

@@ -415,9 +415,11 @@ async def stream_question(
                     "cost_usd": round(total.cost_usd, 6),
                 },
             )
-        except LLMError as exc:
+        except LLMError:
+            # The upstream error goes to the log, not to the browser: it names
+            # the provider, its status codes and its error bodies.
             logger.exception("stream failed")
-            yield _sse("error", {"detail": str(exc)})
+            yield _sse("error", {"detail": "The interviewer could not be reached. Try again in a moment."})
         except Exception:
             # Never let an internal error escape as a stack trace to the client.
             logger.exception("unexpected stream failure")

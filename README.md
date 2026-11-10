@@ -9,7 +9,7 @@ scorecard that cites the moments that earned each score.
 [![CI](https://github.com/eimaieros/cadence/actions/workflows/ci.yml/badge.svg)](https://github.com/eimaieros/cadence/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 ![Python 3.12](https://img.shields.io/badge/python-3.12-blue)
-![220 tests](https://img.shields.io/badge/tests-220-brightgreen)
+![232 tests](https://img.shields.io/badge/tests-232-brightgreen)
 
 Built with FastAPI, PostgreSQL, and Next.js. Runs with no API key.
 
@@ -146,6 +146,13 @@ while an `async def` endpoint runs on the event loop — so one blocking call
 inside an `async def` (a sync driver, `requests`, `time.sleep`) stalls the entire
 loop and the app falls over under load while looking fine in development. There
 is no blocking I/O in any `async def` in this codebase.
+
+bcrypt is the same trap with no I/O in it: about a quarter of a second per hash
+at cost 12, by design, all of it on the CPU. Called inline in `login` and
+`register`, it held the event loop for that whole time, so every open interview
+stream froze behind one sign-in. Both now hand it to a worker thread, and since
+bcrypt releases the GIL while it hashes, that thread runs alongside the loop. A
+test swaps in a 300 ms blocking stand-in and fails if the loop stops ticking.
 
 ### One interview, one mutation at a time
 
@@ -339,7 +346,7 @@ npm run dev
 cd backend && pytest -q
 ```
 
-161 backend tests. They need `cadence_test` to exist; the schema is dropped and recreated
+173 backend tests. They need `cadence_test` to exist; the schema is dropped and recreated
 per test, so never point `DATABASE_URL` at anything you care about.
 
 The frontend suite has 59 tests: 20 protocol edge cases for SSE, four for
@@ -369,6 +376,7 @@ tests/test_pricing.py .................. current model rates, conservative fallb
 tests/test_tools.py .................... allowlist, validation, caps, audit, tool streams
 tests/test_client_address.py ........... the edge's viewer header, per-viewer budgets
 tests/test_retrieval.py ................ chunking, the offline embedder, the eval's own maths
+tests/test_input_hygiene.py ............ NUL bytes refused at the boundary, bcrypt off the loop
 tests/test_job_description.py .......... pgvector search, session isolation, the search tool
 ```
 
