@@ -21,6 +21,9 @@ const BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
    unchanged. The flag is inlined at build time, so a normal build drops the
    demo branch entirely. */
 const DEMO = process.env.NEXT_PUBLIC_DEMO === "1";
+export const IS_DEMO = DEMO;
+/* Mirrors JOB_DESCRIPTION_MAX_CHARS in backend/app/schemas.py. */
+export const JOB_DESCRIPTION_MAX_CHARS = 12_000;
 const http: typeof fetch = DEMO
   ? createDemoFetch(BASE)
   : (input, init) => fetch(input, init);
@@ -192,10 +195,21 @@ export const api = {
 
   getSession: (id: string) => request(`/sessions/${id}`, SessionDetailSchema),
 
-  createSession: (role_title: string, focus_areas: string[], seniority: Seniority) =>
+  createSession: (
+    role_title: string,
+    focus_areas: string[],
+    seniority: Seniority,
+    job_description?: string,
+  ) =>
     request("/sessions", SessionSummarySchema, {
       method: "POST",
-      body: JSON.stringify({ role_title, focus_areas, seniority }),
+      // Left out entirely when blank, so the server stores nothing for it.
+      body: JSON.stringify({
+        role_title,
+        focus_areas,
+        seniority,
+        ...(job_description?.trim() ? { job_description: job_description.trim() } : {}),
+      }),
     }),
 
   deleteSession: async (id: string) => {

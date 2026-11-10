@@ -99,3 +99,43 @@ describe("rotating browser session", () => {
     expect(auth.getRefresh()).toBeNull();
   });
 });
+
+describe("creating a session", () => {
+  const SUMMARY = {
+    id: "5d0f1d3e-6f43-4a51-9d0e-2b8c3a1f9e77",
+    role_title: "Backend Engineer",
+    seniority: "mid",
+    focus_areas: [],
+    status: "active",
+    cost_usd: 0,
+    created_at: "2026-11-10T00:00:00Z",
+    completed_at: null,
+  };
+
+  beforeEach(() => auth.set(ORIGINAL));
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    auth.clear();
+  });
+
+  const sentBody = (fetchMock: ReturnType<typeof vi.fn>) =>
+    JSON.parse(String((fetchMock.mock.calls[0]?.[1] as RequestInit).body));
+
+  it("sends the job description trimmed", async () => {
+    const fetchMock = vi.fn().mockResolvedValueOnce(json(SUMMARY, 201));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await api.createSession("Backend Engineer", [], "mid", "  - PostgreSQL migrations\n");
+
+    expect(sentBody(fetchMock).job_description).toBe("- PostgreSQL migrations");
+  });
+
+  it("leaves a blank job description out of the request", async () => {
+    const fetchMock = vi.fn().mockResolvedValueOnce(json(SUMMARY, 201));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await api.createSession("Backend Engineer", [], "mid", " \n ");
+
+    expect(sentBody(fetchMock)).not.toHaveProperty("job_description");
+  });
+});

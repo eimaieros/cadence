@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
-import { ApiError, api, auth } from "@/lib/api";
+import { ApiError, IS_DEMO, JOB_DESCRIPTION_MAX_CHARS, api, auth } from "@/lib/api";
 import type { SessionSummary, Seniority } from "@/lib/schemas";
 
 const SENIORITIES: Seniority[] = ["junior", "mid", "senior", "staff"];
@@ -22,6 +22,7 @@ export default function SessionsPage() {
   const [role, setRole] = useState("");
   const [focus, setFocus] = useState("");
   const [seniority, setSeniority] = useState<Seniority>("mid");
+  const [job, setJob] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
@@ -54,6 +55,10 @@ export default function SessionsPage() {
       setError("Give the role a name first.");
       return;
     }
+    if (job.trim().length > JOB_DESCRIPTION_MAX_CHARS) {
+      setError("That job description is too long. Paste the requirements section only.");
+      return;
+    }
     setBusy(true);
     setError(null);
     try {
@@ -65,6 +70,7 @@ export default function SessionsPage() {
           .filter(Boolean)
           .slice(0, 6),
         seniority,
+        job,
       );
       router.push(`/sessions/${created.id}`);
     } catch (err) {
@@ -175,6 +181,30 @@ export default function SessionsPage() {
               </div>
             </div>
           </div>
+
+          {/* The static demo has no database to search, so the field would be a
+              promise it cannot keep. */}
+          {!IS_DEMO && (
+            <div className="mt-6">
+              <label htmlFor="job" className="label mb-2 block">
+                Job description <span className="normal-case tracking-normal">(optional)</span>
+              </label>
+              <textarea
+                id="job"
+                value={job}
+                onChange={(e) => setJob(e.target.value)}
+                rows={5}
+                maxLength={JOB_DESCRIPTION_MAX_CHARS}
+                placeholder="Paste the ad. The interviewer will search it to ask about what this job requires."
+                aria-describedby="job-hint"
+                className="w-full resize-y border bg-transparent px-3 py-2.5 text-[0.95rem] focus:border-[color:var(--color-ink)]"
+                style={{ borderRadius: "var(--radius-card)" }}
+              />
+              <p id="job-hint" className="label mt-2 normal-case tracking-normal">
+                Split into passages and searched, never shown back. Deleted with the session.
+              </p>
+            </div>
+          )}
 
           {error && (
             <p
