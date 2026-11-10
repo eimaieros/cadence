@@ -29,16 +29,54 @@ from sqlalchemy import (
     Integer,
     String,
     Text,
+    UniqueConstraint,
     func,
 )
 from sqlalchemy.dialects.postgresql import JSONB, UUID as PGUUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
+from sqlalchemy.types import UserDefinedType
 
 from app.db import Base
 
 
 def _uuid() -> uuid.UUID:
     return uuid.uuid4()
+
+
+class Vector(UserDefinedType):
+    """pgvector's ``vector`` column, without a driver-side codec.
+
+    asyncpg has no binary codec for the type, so it falls back to PostgreSQL's
+    text protocol and values cross the wire in pgvector's own text form
+    (``[0.1,0.2]``). This class formats and parses that. It costs a little
+    parsing and keeps the dependency list as it was.
+
+    The column has no fixed dimension. A dimension is only required to build an
+    ANN index, and a job description is a few dozen passages -- an exact scan
+    of one session's rows is the right plan at that size.
+    """
+
+    cache_ok = True
+
+    def get_col_spec(self, **_kw) -> str:
+        return "vector"
+
+    def bind_processor(self, dialect):
+        def process(value):
+            if value is None:
+                return None
+            return "[" + ",".join(repr(float(v)) for v in value) + "]"
+
+        return process
+
+    def result_processor(self, dialect, coltype):
+        def process(value):
+            if value is None:
+                return None
+            body = value.strip()[1:-1]
+            return [float(v) for v in body.split(",")] if body else []
+
+        return process
 
 
 class SessionStatus(str, enum.Enum):
@@ -218,3 +256,28 @@ class ToolCall(Base):
     )
 
     __table_args__ = (Index("ix_tool_calls_session_turn", "session_id", "turn_index"),)
+
+
+class JobDescriptionChunk(Base):
+    """One passage of the job description pasted in when a session was created.
+
+    The description is never stored whole and never read back whole: it exists
+    only as passages the interviewer can search. Rows carry ``session_id`` and
+    every search filters on it -- the id comes from the server, not from the
+    model. Like ``ToolCall`` this has no ORM relationship; the foreign key's
+    ``ON DELETE CASCADE`` removes the passages with their session.
+    """
+
+    __tablename__ = "job_description_chunks"
+
+    id: Mapped[uuid.UUID] = mapped_column(PGUUID(as_uuid=True), primary_key=True, default=_uuid)
+    session_id: Mapped[uuid.UUID] = mapped_column(
+        PGUUID(as_uuid=True), ForeignKey("interview_sessions.id", ondelete="CASCADE"), nullable=False
+    )
+    ordinal: Mapped[int] = mapped_column(Integer, nullable=False)
+    content: Mapped[str] = mapped_column(Text, nullable=False)
+    embedding: Mapped[list[float]] = mapped_column(Vector(), nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint("session_id", "ordinal", name="uq_job_description_chunks_session_ordinal"),
+    )

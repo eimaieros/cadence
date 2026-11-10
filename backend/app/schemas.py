@@ -82,10 +82,25 @@ class RefreshRequest(BaseModel):
 SENIORITIES = ("junior", "mid", "senior", "staff")
 
 
+# About four pages of text: more than a long job ad, small enough that
+# embedding it stays a few milliseconds inside the request.
+JOB_DESCRIPTION_MAX_CHARS = 12_000
+
+
 class SessionCreate(BaseModel):
     role_title: Annotated[str, Field(min_length=2, max_length=160)]
     focus_areas: list[str] = Field(default_factory=list, max_length=6)
     seniority: Literal["junior", "mid", "senior", "staff"] = "mid"
+    # Optional. Split into passages the interviewer can search; the text itself
+    # is not stored and never reaches a system prompt. See app/retrieval.
+    job_description: Annotated[str | None, Field(max_length=JOB_DESCRIPTION_MAX_CHARS)] = None
+
+    @field_validator("job_description")
+    @classmethod
+    def _blank_is_none(cls, v: str | None) -> str | None:
+        if v is None:
+            return None
+        return v.strip() or None
 
     @field_validator("role_title")
     @classmethod

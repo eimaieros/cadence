@@ -27,6 +27,7 @@ from app.deps import CurrentUser, DbSession, OwnedSession
 from app.llm.client import LLMError, StreamResult, Usage
 from app.llm.prompts import interviewer_context, interviewer_system
 from app.llm.scoring import ScoringError, score_transcript
+from app.retrieval.store import has_job_description, make_search, store_job_description
 from app.llm.tools import (
     MAX_CALLS_PER_ROUND,
     MAX_TOOL_ROUNDS,
@@ -125,6 +126,9 @@ async def create_session(
     )
     db.add(session)
     await db.flush()
+    if payload.job_description:
+        # Same transaction as the session: either both exist or neither does.
+        await store_job_description(db, session.id, payload.job_description)
     return session
 
 
@@ -264,11 +268,17 @@ async def stream_question(
     # fixed here, on the server, before the model runs: no tool takes an id, so
     # nothing the model writes can point a call at another session.
     uses_tools = bool(getattr(provider, "supports_tools", False))
+    search = None
+    if uses_tools and await has_job_description(db, session_id):
+        from app.db import SessionFactory
+
+        search = make_search(SessionFactory, session_id)
     tool_ctx = ToolContext(
         focus_areas=list(session.focus_areas or []),
         transcript=[t.content for t in turns],
         questions_asked=asked,
         max_questions=MAX_QUESTIONS,
+        search_job_description=search,
     )
     spent_before = session.cost_usd or 0.0
 
@@ -291,7 +301,7 @@ async def stream_question(
                     round_no < rounds
                     and spent_before + total.cost_usd < settings.session_cost_ceiling_usd
                 ):
-                    offer = tool_specs()
+                    offer = tool_specs(tool_ctx)
 
                 result = StreamResult()
                 extra = {"tools": offer} if uses_tools else {}

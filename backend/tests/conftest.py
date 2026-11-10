@@ -71,6 +71,8 @@ async def reset_rate_limiters():
 async def engine():
     eng = create_async_engine(TEST_DB_URL, poolclass=None)
     async with eng.begin() as conn:
+        # The migration does this in production; create_all does not know to.
+        await conn.exec_driver_sql("CREATE EXTENSION IF NOT EXISTS vector")
         await conn.run_sync(Base.metadata.drop_all)
         await conn.run_sync(Base.metadata.create_all)
     yield eng

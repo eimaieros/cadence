@@ -390,8 +390,9 @@ class ScriptedProvider:
 
     When offered tools it uses them the way the prompt asks, by fixed rules, so
     the tool path runs offline as well: it checks coverage before the first
-    question, and flags an answer that made its case without a single number,
-    then asks for the number.
+    question (and searches the job description, when the session has one), and
+    flags an answer that made its case without a single number, then asks for
+    the number.
     """
 
     name = "scripted"
@@ -433,22 +434,39 @@ class ScriptedProvider:
                 return topic if isinstance(topic, str) else None
         return None
 
-    def _plan_tool(self, messages: list[dict], tools: list[dict] | None) -> ToolCallRequest | None:
+    def _plan_tools(self, messages: list[dict], tools: list[dict] | None) -> list[ToolCallRequest]:
         if not tools or (messages and isinstance(messages[-1].get("content"), list)):
-            return None
+            return []
         offered = {t.get("name") for t in tools}
         asked = self._questions_asked(messages)
-        if asked == 0 and "get_coverage" in offered:
-            return ToolCallRequest(id="scripted-coverage", name="get_coverage", input={})
+        if asked == 0:
+            calls = []
+            if "get_coverage" in offered:
+                calls.append(ToolCallRequest(id="scripted-coverage", name="get_coverage", input={}))
+            # With a job description on the session, look up what it says about
+            # the role before the first question. The query is the interview's
+            # configuration line, which the server wrote.
+            first = messages[0].get("content") if messages else None
+            if "search_job_description" in offered and isinstance(first, str) and first.strip():
+                calls.append(
+                    ToolCallRequest(
+                        id="scripted-search",
+                        name="search_job_description",
+                        input={"query": " ".join(first.split())[:200], "k": 3},
+                    )
+                )
+            return calls
         answer = self._last_answer(messages)
         if answer and not any(ch.isdigit() for ch in answer) and "flag_follow_up" in offered:
             topic = " ".join(answer.split()[:8])[:80]
-            return ToolCallRequest(
-                id=f"scripted-follow-up-{asked}",
-                name="flag_follow_up",
-                input={"topic": topic, "reason": "no_number"},
-            )
-        return None
+            return [
+                ToolCallRequest(
+                    id=f"scripted-follow-up-{asked}",
+                    name="flag_follow_up",
+                    input={"topic": topic, "reason": "no_number"},
+                )
+            ]
+        return []
 
     def _pick_question(self, messages: list[dict]) -> str:
         topic = self._flagged_topic(messages)
@@ -471,10 +489,10 @@ class ScriptedProvider:
         result: StreamResult,
         tools: list[dict] | None = None,
     ) -> AsyncIterator[str]:
-        call = self._plan_tool(messages, tools)
-        if call is not None:
+        calls = self._plan_tools(messages, tools)
+        if calls:
             result.text = ""
-            result.tool_calls = [call]
+            result.tool_calls = calls
             result.stop_reason = "tool_use"
             result.usage = Usage(input_tokens=len(system) // 4, output_tokens=8, model=model)
             return
