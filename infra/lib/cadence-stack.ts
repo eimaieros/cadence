@@ -282,6 +282,11 @@ export class CadenceStack extends Stack {
       keepaliveTimeout: Duration.seconds(60),
       customHeaders: { [ORIGIN_HEADER]: originVerify.secretValue.unsafeUnwrap() },
     });
+    // Every response leaves the edge with the standard security headers: HSTS,
+    // nosniff, framing only by this origin and a referrer policy. AWS's managed
+    // policy, not a hand-written one: maintained by AWS and free. Pages and API
+    // alike, so a header no route remembered to set is still set.
+    const securityHeaders = cloudfront.ResponseHeadersPolicy.SECURITY_HEADERS;
     const distribution = new cloudfront.Distribution(this, "Edge", {
       comment: "cadence",
       priceClass: cloudfront.PriceClass.PRICE_CLASS_100,
@@ -297,6 +302,7 @@ export class CadenceStack extends Stack {
         originRequestPolicy: cloudfront.OriginRequestPolicy.ALL_VIEWER_AND_CLOUDFRONT_2022,
         // Compressing at the edge would buffer server-sent events.
         compress: false,
+        responseHeadersPolicy: securityHeaders,
       },
       additionalBehaviors: {
         // Content-hashed file names: safe to cache for as long as CloudFront likes.
@@ -305,6 +311,7 @@ export class CadenceStack extends Stack {
           viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
           cachePolicy: cloudfront.CachePolicy.CACHING_OPTIMIZED,
           compress: true,
+          responseHeadersPolicy: securityHeaders,
         },
       },
     });

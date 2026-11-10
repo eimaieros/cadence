@@ -134,6 +134,15 @@ describe("the edge", () => {
     assert.equal(cached[0].PathPattern, "/_next/static/*");
   });
 
+  it("adds the standard security headers to every response, pages and API alike", () => {
+    const config = distribution();
+    // Managed-SecurityHeadersPolicy: HSTS, X-Content-Type-Options, X-Frame-Options,
+    // Referrer-Policy.
+    for (const behavior of [config.DefaultCacheBehavior, ...config.CacheBehaviors]) {
+      assert.equal(behavior.ResponseHeadersPolicyId, "67f7725c-6f97-4210-82d7-5512b31e9d03");
+    }
+  });
+
   it("signs every request to the origin with a secret only it knows", () => {
     const [origin] = distribution().Origins;
     const header = origin.OriginCustomHeaders.find(
