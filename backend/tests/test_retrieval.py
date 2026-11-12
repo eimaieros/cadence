@@ -10,7 +10,10 @@ from __future__ import annotations
 import math
 import subprocess
 import sys
+import uuid
 from pathlib import Path
+
+import pytest
 
 from app.retrieval.chunking import (
     MAX_UNIT_CHARS,
@@ -18,6 +21,7 @@ from app.retrieval.chunking import (
     chunk_job_description,
 )
 from app.retrieval.embedding import DIMENSIONS, HashingEmbedder, cosine_similarity, rank
+from app.retrieval.store import store_job_description
 from evals.retrieval import evaluate, mean_reciprocal_rank, recall_at
 from evals.retrieval_cases import CASES
 
@@ -158,3 +162,26 @@ def test_offline_retrieval_meets_its_floor_on_standard_queries():
     standard = [r for r in evaluate(CASES, HashingEmbedder()) if not r.hard]
     assert recall_at(standard, 3) >= RECALL_AT_3_FLOOR
     assert mean_reciprocal_rank(standard) >= MRR_FLOOR
+
+
+def test_vectors_of_different_lengths_are_an_error_not_a_prefix():
+    with pytest.raises(ValueError):
+        cosine_similarity([1.0, 0.0, 0.0], [1.0, 0.0])
+
+
+async def test_an_embedder_that_returns_too_few_vectors_fails_loudly():
+    """A hosted embedder that drops a vector must not shorten the description quietly."""
+
+    class ShortEmbedder:
+        def embed(self, texts):
+            return HashingEmbedder().embed(texts)[:-1]
+
+    class Db:
+        def add(self, row):
+            pass
+
+        async def flush(self):
+            pass
+
+    with pytest.raises(ValueError):
+        await store_job_description(Db(), uuid.uuid4(), LISTING, embedder=ShortEmbedder())

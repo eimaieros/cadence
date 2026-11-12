@@ -111,7 +111,9 @@ class HashingEmbedder:
 
 def cosine_similarity(a: Sequence[float], b: Sequence[float]) -> float:
     """Cosine similarity; 0.0 when either vector is all zeros."""
-    dot = sum(x * y for x, y in zip(a, b))
+    # strict: two vectors of different lengths are a bug upstream, and a dot
+    # product over the shorter prefix would hide it behind a plausible score.
+    dot = sum(x * y for x, y in zip(a, b, strict=True))
     norm = math.sqrt(sum(x * x for x in a)) * math.sqrt(sum(y * y for y in b))
     return dot / norm if norm else 0.0
 

@@ -50,7 +50,9 @@ async def store_job_description(
     passages = chunk_job_description(description)[:MAX_PASSAGES]
     vectors = embedder.embed([p.text for p in passages])
     stored = 0
-    for passage, vector in zip(passages, vectors):
+    # strict: an embedder that hands back fewer vectors than it was given
+    # passages must fail here, not silently store a shorter description.
+    for passage, vector in zip(passages, vectors, strict=True):
         # A passage with no usable words embeds to the zero vector, and cosine
         # distance to a zero vector is undefined. It could never be found, so
         # it is not stored.
