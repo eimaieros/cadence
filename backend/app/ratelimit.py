@@ -100,7 +100,7 @@ def viewer_address(value: str) -> str | None:
     return str(address)
 
 
-def client_key(request: Request) -> str:
+def client_key(request: Request, *, by_token: bool = True) -> str:
     """Identify the caller.
 
     Authenticated requests key on the token, so a limit follows the account
@@ -108,13 +108,18 @@ def client_key(request: Request) -> str:
     trusted edge wrote into `client_ip_header`, when that is configured and
     parses, and the TCP peer otherwise.
 
+    `by_token=False` is for the surfaces a caller reaches before logging in.
+    There the token is unverified and costs nothing to make up: honouring it
+    would let anyone send a fresh random one with every login attempt and get
+    a fresh budget each time, which is a brute-force limit that never binds.
+
     The peer alone is coarse behind a proxy -- it is the proxy -- and trusting
     a client-writable `X-Forwarded-For` instead is how a limiter becomes
     decorative. The edge header is trusted only because the deployment makes
     the edge the only way in (see infra/).
     """
     header = request.headers.get("authorization")
-    if header and header.lower().startswith("bearer "):
+    if by_token and header and header.lower().startswith("bearer "):
         return f"token:{hash(header[7:])}"
     name = settings.client_ip_header
     if name:
@@ -127,11 +132,12 @@ def client_key(request: Request) -> str:
 class RateLimit:
     """Dependency factory: `Depends(RateLimit(5, 60))`."""
 
-    def __init__(self, limit: int, window_seconds: float) -> None:
+    def __init__(self, limit: int, window_seconds: float, *, by_token: bool = True) -> None:
         self.limiter = SlidingWindowLimiter(limit, window_seconds)
+        self.by_token = by_token
 
     async def __call__(self, request: Request) -> None:
-        allowed, retry_after = self.limiter.check(client_key(request))
+        allowed, retry_after = self.limiter.check(client_key(request, by_token=self.by_token))
         if not allowed:
             raise HTTPException(
                 status_code=status.HTTP_429_TOO_MANY_REQUESTS,
@@ -142,7 +148,9 @@ class RateLimit:
 
 # Shared instances -- one limiter per protected surface, so a burst of logins
 # cannot consume the budget for starting sessions.
-login_limit = RateLimit(limit=10, window_seconds=60)
-register_limit = RateLimit(limit=5, window_seconds=300)
+# Login and registration are reached before there is an account to follow, so
+# they key on the address alone (see client_key).
+login_limit = RateLimit(limit=10, window_seconds=60, by_token=False)
+register_limit = RateLimit(limit=5, window_seconds=300, by_token=False)
 session_create_limit = RateLimit(limit=20, window_seconds=60)
 stream_limit = RateLimit(limit=30, window_seconds=60)

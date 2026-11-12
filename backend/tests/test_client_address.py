@@ -14,7 +14,7 @@ from pydantic import ValidationError
 from starlette.requests import Request
 
 from app.config import Settings, settings
-from app.ratelimit import client_key, register_limit, viewer_address
+from app.ratelimit import client_key, login_limit, register_limit, viewer_address
 
 EDGE = "cloudfront-viewer-address"
 
@@ -109,3 +109,28 @@ async def test_viewers_behind_one_proxy_get_separate_budgets(client, monkeypatch
     first = [await register(i, "203.0.113.7:40000") for i in range(6)]
     assert first == [201] * 5 + [429]
     assert await register(99, "198.51.100.20:40001") == 201
+
+
+def test_a_surface_reached_before_login_ignores_the_token():
+    """Before login a token is unverified and free to make up."""
+    request = _request({"Authorization": "Bearer made-up"})
+    assert client_key(request, by_token=False) == "ip:10.0.0.5"
+
+
+async def test_random_tokens_do_not_buy_extra_login_attempts(client):
+    """Brute force with a fresh made-up token on every try still hits the limit.
+
+    Keyed on the token, each of these requests would have had a budget of its
+    own and the limiter would never have answered 429.
+    """
+    login_limit.limiter.reset()
+    codes = []
+    for i in range(11):
+        resp = await client.post(
+            "/auth/login",
+            json={"email": "nobody@example.com", "password": "wrong-password-123"},
+            headers={"Authorization": f"Bearer made-up-{i}"},
+        )
+        codes.append(resp.status_code)
+    assert codes[:10] == [401] * 10
+    assert codes[10] == 429
